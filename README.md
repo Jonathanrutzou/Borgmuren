@@ -3,7 +3,8 @@
 Topdown borgforsvar på et 32×24-gitter (iPad 4:3), en alternativ udgave af Borgspillet.
 Ingen grafik endnu, kun firkanter og cirkler.
 
-Åbn `index.html` i en browser for at spille (eller den publicerede web-version).
+Spil den publicerede web-version: https://claude.ai/artifact/QGt4DxtPdg4iafoo9Z7Hfi (eller åbn `index.html` i en browser).
+`python3 build_artifact.py <fil>` samler spillet til én fil til web-versionen.
 
 ## Sådan spilles
 - **Byggefase:** vælg en bygning i værktøjslinjen og tryk på banen. Hegn, stenmur og net kan trækkes ud. Der skal altid være en åbning til borgen. De røde prikker viser monstrenes vej.

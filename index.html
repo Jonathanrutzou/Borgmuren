@@ -6,10 +6,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Borgmuren</title>
 <style>
-  :root { --bg: #1f2328; --fg: #eee; --btn: #333; --border: #555; --accent: #4ade80; --board: #e7e2d4; }
+  :root { --bg: #1f2328; --fg: #eee; --btn: #333; --border: #555; --accent: #4ade80; --board: #e7e2d4; color-scheme: dark; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: system-ui, sans-serif; }
-  body { display: flex; flex-direction: column; align-items: center; touch-action: none; user-select: none; -webkit-user-select: none; }
+  body { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; align-items: center; touch-action: none; user-select: none; -webkit-user-select: none; }
   #hud, #tools { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: center; padding: 6px 8px; }
   #tools { gap: 6px; padding-top: 0; }
   #hud .stat { font-size: 15px; }

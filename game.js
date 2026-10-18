@@ -663,7 +663,9 @@ function buildToolbar() {
 // ---------- tegning ----------
 function resize() {
   const used = $('hud').offsetHeight + $('tools').offsetHeight + $('msg').offsetHeight + 12;
-  const w = Math.min(window.innerWidth - 8, (window.innerHeight - used) * 4 / 3);
+  const cs = getComputedStyle(document.body);
+  const availW = document.body.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const w = Math.min(availW, (window.innerHeight - used) * 4 / 3);
   tile = Math.max(8, Math.floor(w / COLS));
   const dpr = window.devicePixelRatio || 1;
   canvas.style.width = tile * COLS + 'px';
