@@ -589,17 +589,40 @@ function updateMonster(m, dt) {
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const $ = id => document.getElementById(id);
-let tile = 20;
-let dragging = false;
+// Kamera: tile er feltets størrelse i skærmpixels (baseTile * zoom); camX/camY er,
+// hvor langt banen er rullet. Lærredet har altid samme størrelse.
+const MAX_ZOOM = 3;
+const TAP_SLOP = 10;          // så mange pixels må fingeren flytte sig, før det er en panorering
+let baseTile = 20, zoom = 1, tile = 20, camX = 0, camY = 0, viewW = 0, viewH = 0;
 
-function pointAt(ev) {
-  const r = canvas.getBoundingClientRect();
-  return { x: (ev.clientX - r.left) / tile, y: (ev.clientY - r.top) / tile };
+function clampCamera() {
+  camX = Math.min(Math.max(camX, 0), COLS * tile - viewW);
+  camY = Math.min(Math.max(camY, 0), ROWS * tile - viewH);
 }
 
-canvas.addEventListener('pointerdown', ev => {
-  ev.preventDefault();
-  const p = pointAt(ev), cx = Math.floor(p.x), cy = Math.floor(p.y);
+// Zoomer, så punktet (sx, sy) på lærredet bliver stående samme sted.
+function zoomAt(newZoom, sx, sy) {
+  newZoom = Math.min(Math.max(newZoom, 1), MAX_ZOOM);
+  const wx = (sx + camX) / tile, wy = (sy + camY) / tile;
+  zoom = newZoom;
+  tile = baseTile * zoom;
+  camX = wx * tile - sx;
+  camY = wy * tile - sy;
+  clampCamera();
+}
+
+function canvasPoint(ev) {
+  const r = canvas.getBoundingClientRect();
+  return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+}
+
+function toWorld(sp) {
+  return { x: (sp.x + camX) / tile, y: (sp.y + camY) / tile };
+}
+
+// Ét tryk = én handling. At trække med én finger ruller banen, to fingre zoomer.
+function tap(p) {
+  const cx = Math.floor(p.x), cy = Math.floor(p.y);
   if (!inBounds(cx, cy)) return;
   if (state.phase === 'wave') { moveHero(p); return; }   // under bølgen styres helten
   if (state.phase !== 'build') return;
@@ -607,23 +630,67 @@ canvas.addEventListener('pointerdown', ev => {
   if (b) { state.selected = b; buildToolbar(); return; }
   state.selected = null;
   if (state.tool === 'hero') { moveHero(p); return; }
-  if (place(state.tool, cx, cy)) {
-    recomputeField();
-    const d = BUILDINGS[state.tool];
-    dragging = d.cost <= 10;     // mure og net kan trækkes ud
-    if (dragging) canvas.setPointerCapture(ev.pointerId);
-  }
+  if (place(state.tool, cx, cy)) recomputeField();
   buildToolbar();
+}
+
+const pointers = new Map();
+let gesture = null;   // { start, moved, multi, pinchDist, mid }
+
+function pinchInfo() {
+  const [a, b] = [...pointers.values()];
+  return { dist: Math.hypot(a.x - b.x, a.y - b.y), mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+}
+
+canvas.addEventListener('pointerdown', ev => {
+  ev.preventDefault();
+  canvas.setPointerCapture(ev.pointerId);
+  const sp = canvasPoint(ev);
+  pointers.set(ev.pointerId, sp);
+  if (pointers.size === 1) gesture = { start: sp, last: sp, moved: false, multi: false };
+  else if (pointers.size === 2 && gesture) {
+    gesture.multi = true;
+    const pi = pinchInfo();
+    gesture.pinchDist = pi.dist; gesture.mid = pi.mid;
+  }
 });
 canvas.addEventListener('pointermove', ev => {
-  if (!dragging) return;
-  const p = pointAt(ev);
-  if (place(state.tool, Math.floor(p.x), Math.floor(p.y))) recomputeField();
+  if (!pointers.has(ev.pointerId) || !gesture) return;
+  const sp = canvasPoint(ev);
+  pointers.set(ev.pointerId, sp);
+  if (pointers.size >= 2) {
+    const pi = pinchInfo();
+    if (gesture.pinchDist > 0) zoomAt(zoom * pi.dist / gesture.pinchDist, pi.mid.x, pi.mid.y);
+    camX -= pi.mid.x - gesture.mid.x; camY -= pi.mid.y - gesture.mid.y;
+    clampCamera();
+    gesture.pinchDist = pi.dist; gesture.mid = pi.mid;
+    return;
+  }
+  if (gesture.multi) return;
+  if (!gesture.moved && Math.hypot(sp.x - gesture.start.x, sp.y - gesture.start.y) > TAP_SLOP) gesture.moved = true;
+  if (gesture.moved) {
+    camX -= sp.x - gesture.last.x; camY -= sp.y - gesture.last.y;
+    clampCamera();
+  }
+  gesture.last = sp;
 });
-const endDrag = () => { dragging = false; };
-canvas.addEventListener('pointerup', endDrag);
-canvas.addEventListener('pointercancel', endDrag);
+function endPointer(ev, cancelled) {
+  if (!pointers.has(ev.pointerId)) return;
+  pointers.delete(ev.pointerId);
+  if (pointers.size > 0 || !gesture) return;
+  if (!cancelled && !gesture.moved && !gesture.multi) tap(toWorld(canvasPoint(ev)));
+  gesture = null;
+}
+canvas.addEventListener('pointerup', ev => endPointer(ev, false));
+canvas.addEventListener('pointercancel', ev => endPointer(ev, true));
+canvas.addEventListener('wheel', ev => {
+  ev.preventDefault();
+  const sp = canvasPoint(ev);
+  zoomAt(zoom * Math.exp(-ev.deltaY * 0.002), sp.x, sp.y);
+}, { passive: false });
 
+$('bZoomIn').onclick = () => zoomAt(zoom * 1.5, viewW / 2, viewH / 2);
+$('bZoomOut').onclick = () => zoomAt(zoom / 1.5, viewW / 2, viewH / 2);
 $('bStart').onclick = () => startWave();
 $('bRestart').onclick = () => { newGame(); buildToolbar(); };
 
@@ -666,13 +733,15 @@ function resize() {
   const cs = getComputedStyle(document.body);
   const availW = document.body.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
   const w = Math.min(availW, (window.innerHeight - used) * 4 / 3);
-  tile = Math.max(8, Math.floor(w / COLS));
+  baseTile = Math.max(8, Math.floor(w / COLS));
+  tile = baseTile * zoom;
+  viewW = baseTile * COLS; viewH = baseTile * ROWS;
   const dpr = window.devicePixelRatio || 1;
-  canvas.style.width = tile * COLS + 'px';
-  canvas.style.height = tile * ROWS + 'px';
-  canvas.width = tile * COLS * dpr;
-  canvas.height = tile * ROWS * dpr;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  canvas.style.width = viewW + 'px';
+  canvas.style.height = viewH + 'px';
+  canvas.width = viewW * dpr;
+  canvas.height = viewH * dpr;
+  clampCamera();
 }
 window.addEventListener('resize', resize);
 
@@ -696,7 +765,10 @@ function text(str, x, y, size, color) {
 }
 
 function draw() {
-  ctx.clearRect(0, 0, COLS * tile, ROWS * tile);
+  const dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, viewW, viewH);
+  ctx.setTransform(dpr, 0, 0, dpr, -camX * dpr, -camY * dpr);
 
   // spawn-zone til venstre
   ctx.fillStyle = 'rgba(239,68,68,0.12)';
@@ -810,7 +882,7 @@ function drawHud() {
   if (state.messageTimer > 0) msg = state.message;
   else if (state.phase === 'build') msg = state.tool === 'hero'
     ? 'Tryk på banen for at flytte helten.'
-    : 'Byggefase: tryk for at bygge (mure og net kan trækkes ud). Tryk på en bygning for at opgradere, reparere eller sælge.';
+    : 'Byggefase: tryk for at bygge ét felt ad gangen. Tryk på en bygning for at opgradere, reparere eller sælge. Zoom med to fingre, træk med én finger for at flytte banen.';
   else if (state.phase === 'wave') msg = `Bølge ${state.wave}: tryk på banen for at flytte helten. Monstre tilbage: ${state.spawnQueue.length + state.monsters.length}`;
   else msg = '';
   $('msg').textContent = msg;
