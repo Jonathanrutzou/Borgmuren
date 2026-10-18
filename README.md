@@ -1,20 +1,26 @@
 # Borgmuren
 
 Topdown borgforsvar på et 32×24-gitter (iPad 4:3), en alternativ udgave af Borgspillet.
-Ingen grafik endnu, kun firkanter og cirkler.
+Ingen grafik endnu, kun firkanter, streger og cirkler.
 
 Spil den publicerede web-version: https://claude.ai/artifact/QGt4DxtPdg4iafoo9Z7Hfi (eller åbn `index.html` i en browser).
 `python3 build_artifact.py <fil>` samler spillet til én fil til web-versionen.
 
 ## Sådan spilles
-- **Byggefase:** vælg en bygning i værktøjslinjen og tryk på banen. Der bygges ét felt pr. tryk, så man ikke kommer til at bygge en stribe ved en fejl. Der skal altid være en åbning til borgen. De røde prikker viser monstrenes vej.
-- **Zoom:** knib med to fingre (eller brug + og − / musehjulet), og træk med én finger for at flytte banen.
-- **Tryk på en bygning** for at opgradere eller sælge den. Det, der er bygget i samme byggefase, sælges for fuld pris, og ældre bygninger for 60 %.
-- **Helten** styres som i Borgspillet: tryk på banen, så går han derhen ad korteste vej uden om bygningerne. Han slås med monstre, han står ved, og holder dem fast. Monstre inden for 2 felter går efter ham. Han går dobbelt så hurtigt som i Borgspillet (3 felter/sek.). Dør han, kommer han tilbage foran borgen efter 10 sekunder. I byggefasen flyttes han med "Flyt helt".
-- **Monstre** (blå = Grunt, rød = Runner) kommer fra venstre og følger labyrinten gennem åbningen. De kan ikke ødelægge mure eller bygninger.
-- **Guld** får man for hvert dræbt monster og fra gårde efter hver bølge.
+- **Bane 1** består af 10 runder. Hver runde har en byggefase og en bølge.
+- **Byg:** tryk på "Byg" for at folde byggemenuen frem, og igen for at folde den væk. Ét tryk bygger én ting.
+  - **Hegn, stenmur og porte** ligger på stregen mellem to felter, så der stadig kan bygges i felterne ved siden af. Tryk tæt på den streg, du vil bygge på. En stenmur er dobbelt så tyk som et hegn.
+  - **Tårne, kaserner, smedje, gård og klæbenet** fylder et felt.
+  - Der skal altid være en åbning til borgen. De røde prikker viser monstrenes vej.
+- **Tryk på en bygning** (med byggemenuen lukket) for at opgradere, reparere eller sælge den. Det, der er bygget i samme byggefase, sælges for fuld pris, og ældre bygninger for 60 %.
+- **Soldater og bueskytter:** tryk på deres kaserne og så "Flyt soldater", og tryk derefter, hvor de skal stå, fx langt inde bag muren. Under en bølge trykker man bare på kasernen og derefter på stedet.
+- **Helten** går derhen, hvor man trykker (når byggemenuen er lukket), ad korteste vej, også på skrå. Han slås med monstre, han står ved, og holder dem fast. Monstre inden for 2 felter går efter ham. Dør han, kommer han tilbage foran borgen efter 10 sekunder.
+- **Monstre** (blå = Grunt, rød = Runner) kommer fra venstre og går den korteste vej mod borgen, også på skrå. De kan ikke komme gennem mure og hegn, men de kan smadre bygninger, der står i vejen. Porte holder dem tilbage et øjeblik.
+- **Efter hver runde** får helt, soldater og bueskytter fuldt liv igen, og gårdene giver guld.
+- **Zoom:** knib med to fingre (eller musehjul), og træk med én finger for at flytte banen.
+- **Tempo x2** gør spillet dobbelt så hurtigt.
 
 ## Bygninger (tal fra Borgspillet)
-Hegn, Stenmur, Høj mur, Klæbenet, Port, Jernport, Bueskyttetårn, Langbuetårn, Kanontårn, Stor kanon,
+Hegn, Stenmur, Høj mur, Port, Jernport, Klæbenet, Bueskyttetårn, Langbuetårn, Kanontårn, Stor kanon,
 Magertårn, Ærkemagertårn, Kaserne (3 niveauer), Bueskyttelejr, Smedje og Gård. Gården er den eneste
 pengebygning. Alle tal står i `CONFIG`, `MONSTERS` og `BUILDINGS` øverst i `game.js`.
