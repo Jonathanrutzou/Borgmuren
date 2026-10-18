@@ -6,17 +6,22 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Borgmuren</title>
 <style>
+  :root { --bg: #1f2328; --fg: #eee; --btn: #333; --border: #555; --accent: #4ade80; --board: #e7e2d4; }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: #1f2328; color: #eee; font-family: system-ui, sans-serif; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: system-ui, sans-serif; }
   body { display: flex; flex-direction: column; align-items: center; touch-action: none; user-select: none; -webkit-user-select: none; }
-  #hud { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: center; padding: 8px; min-height: 52px; }
+  #hud, #tools { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: center; padding: 6px 8px; }
+  #tools { gap: 6px; padding-top: 0; }
   #hud .stat { font-size: 15px; }
-  #hud button { font-size: 15px; padding: 8px 14px; border-radius: 6px; border: 2px solid #555; background: #333; color: #eee; cursor: pointer; }
-  #hud button.active { border-color: #4ade80; background: #234; }
-  #hud button:disabled { opacity: 0.4; cursor: default; }
-  #msg { font-size: 14px; color: #fbbf24; min-height: 18px; text-align: center; }
-  #wrap { position: relative; }
-  canvas { display: block; background: #e7e2d4; }
+  button { font-size: 14px; padding: 6px 10px; border-radius: 6px; border: 2px solid var(--border); background: var(--btn); color: var(--fg); cursor: pointer; }
+  button small { opacity: 0.7; }
+  button.active { border-color: var(--accent); background: #234; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  #bStart { border-color: var(--accent); }
+  .info { font-size: 14px; font-weight: bold; }
+  #msg { font-size: 14px; color: #fbbf24; min-height: 18px; text-align: center; padding: 0 8px; }
+  #wrap { position: relative; margin-top: 4px; }
+  canvas { display: block; background: var(--board); }
   #overlay { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); font-size: 28px; gap: 16px; }
   #overlay button { font-size: 20px; padding: 10px 20px; }
 </style>
@@ -25,12 +30,11 @@
   <div id="hud">
     <span class="stat" id="sWave"></span>
     <span class="stat" id="sCastle"></span>
+    <span class="stat" id="sGold"></span>
     <span class="stat" id="sHero"></span>
-    <span class="stat" id="sBricks"></span>
-    <button id="bWall" class="active">Mur</button>
-    <button id="bHero">Placér helt</button>
     <button id="bStart">Start bølge</button>
   </div>
+  <div id="tools"></div>
   <div id="msg"></div>
   <div id="wrap">
     <canvas id="c"></canvas>
