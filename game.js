@@ -56,6 +56,16 @@ const BUILDINGS = {
   smithy:     { name: 'Smedje', cost: 80, blocks: true, boost: 0.25, boostRadius: 2.0, color: '#9a3412', label: 'Sm' },
   farm:       { name: 'Gård', cost: 30, blocks: true, income: 10, color: '#ca8a04', label: 'G' },
 };
+// Heltens opgraderinger, købes i borgen (tryk på borgen), 10 trin i hver.
+// Pris for næste trin = cost + step * trin, du allerede har.
+const HERO_UPGRADES = {
+  attack: { name: 'Angrebshastighed', per: 0.07, cost: 60, step: 30, text: '7 % hurtigere slag' },
+  damage: { name: 'Skade', per: 3, cost: 60, step: 30, text: '+3 skade' },
+  hp:     { name: 'Liv', per: 40, cost: 50, step: 25, text: '+40 liv' },
+  move:   { name: 'Bevægelse', per: 0.2, cost: 60, step: 30, text: '+0,2 felt/sek.' },
+};
+const HERO_MAX_LEVEL = 10;
+
 const TOOLBAR = ['fence', 'stone_wall', 'gate', 'net', 'archer', 'cannon', 'mage', 'barracks', 'archer_camp', 'smithy', 'farm'];
 const SOLDIER_ENGAGE = 0.9;   // soldaterne holder monstre inden for dette
 const SOLDIER_GUARD = 2.0;    // og går ud efter monstre så langt fra deres post
@@ -124,7 +134,8 @@ function newGame() {
     wave: 1,
     gold: CONFIG.startGold,
     lives: CONFIG.castleLives,
-    hero: newHero(),
+    hero: null,
+    heroLv: { attack: 0, damage: 0, hp: 0, move: 0 },
     monsters: [],
     soldiers: [],
     shots: [],
@@ -140,12 +151,28 @@ function newGame() {
     message: '',
     messageTimer: 0,
   };
+  state.hero = newHero();
   recomputeField();
 }
 
+const heroLv = k => state.heroLv[k];
+const heroMax = () => CONFIG.hero.hp + heroLv('hp') * HERO_UPGRADES.hp.per;
+const heroDamage = () => CONFIG.hero.damage + heroLv('damage') * HERO_UPGRADES.damage.per;
+const heroInterval = () => CONFIG.hero.attackInterval * Math.pow(1 - HERO_UPGRADES.attack.per, heroLv('attack'));
+const heroSpeed = () => CONFIG.hero.speed + heroLv('move') * HERO_UPGRADES.move.per;
+const heroUpgradeCost = k => HERO_UPGRADES[k].cost + HERO_UPGRADES[k].step * heroLv(k);
+
+function buyHeroUpgrade(k) {
+  const c = heroUpgradeCost(k);
+  if (heroLv(k) >= HERO_MAX_LEVEL || c > state.gold) return;
+  state.gold -= c;
+  state.heroLv[k]++;
+  if (k === 'hp' && state.hero.alive) state.hero.hp += HERO_UPGRADES.hp.per;
+}
+
 function newHero() {
-  const s = CONFIG.heroSpawn, h = CONFIG.hero;
-  return { x: s.x, y: s.y, hp: h.hp, alive: true, cooldown: 0, path: [], opponent: null };
+  const s = CONFIG.heroSpawn;
+  return { x: s.x, y: s.y, hp: heroMax(), alive: true, cooldown: 0, path: [], opponent: null };
 }
 
 const buildingAt = (x, y) => (inBounds(x, y) ? state.buildings.get(idx(x, y)) : undefined);
@@ -572,7 +599,7 @@ function endWave() {
   // fuld liv til helt, soldater og bueskytter efter hver runde
   const h = state.hero;
   if (!h.alive) Object.assign(h, newHero());
-  h.hp = CONFIG.hero.hp; h.opponent = null;
+  h.hp = heroMax(); h.opponent = null;
   for (const s of state.soldiers) {
     s.b.reviving = null;
     if (!s.alive) { s.x = s.post.x; s.y = s.post.y; }
@@ -641,8 +668,8 @@ function updateHero(dt) {
     return;
   }
   h.cooldown = Math.max(0, h.cooldown - dt);
-  h.hp = Math.min(cfg.hp, h.hp + cfg.hp * cfg.regenPerSec * dt);   // helten heler langsomt
-  followPath(h, cfg.speed, dt);
+  h.hp = Math.min(heroMax(), h.hp + heroMax() * cfg.regenPerSec * dt);   // helten heler langsomt
+  followPath(h, heroSpeed(), dt);
 
   if (state.phase !== 'wave') return;
   // slås med nærmeste monster inden for rækkevidde (ikke gennem mure) og hold det fast
@@ -653,8 +680,8 @@ function updateHero(dt) {
     if (h.opponent) h.opponent.heldBy = h;
   }
   if (h.opponent && h.cooldown <= 0) {
-    h.cooldown = cfg.attackInterval;
-    h.opponent.hp -= physical(cfg.damage, h.opponent.s.armor);
+    h.cooldown = heroInterval();
+    h.opponent.hp -= physical(heroDamage(), h.opponent.s.armor);
     state.shots.push({ x1: h.x, y1: h.y, x2: h.opponent.x, y2: h.opponent.y, t: 0.1, color: '#16a34a' });
   }
 }
@@ -913,6 +940,7 @@ function tap(p) {
   const cx = Math.floor(p.x), cy = Math.floor(p.y);
   if (!inBounds(cx, cy) || state.phase === 'over' || state.phase === 'won') return;
   if (state.rallyFor) { setRally(state.rallyFor, p); state.rallyFor = null; buildToolbar(); return; }
+  if (isCastle(cx, cy)) return select('castle');   // borgen: køb opgraderinger til helten
   const e = edgeAtPoint(p);
   const wall = e && e.d < 0.22 ? state.walls.get(e.key) : null;
   const b = buildingAt(cx, cy);
@@ -1020,6 +1048,19 @@ function buildToolbar() {
     bar.appendChild(btn);
   };
   const b = state.selected;
+  if (b === 'castle') {
+    const info = document.createElement('span');
+    info.className = 'info';
+    info.textContent = 'Borgen: opgradér helten';
+    bar.appendChild(info);
+    for (const [k, u] of Object.entries(HERO_UPGRADES)) {
+      const lv = heroLv(k), c = heroUpgradeCost(k), max = lv >= HERO_MAX_LEVEL;
+      add(`${u.name} ${lv}/${HERO_MAX_LEVEL} <small>${max ? 'fuld' : `${u.text}, ${c} g`}</small>`, false, () => buyHeroUpgrade(k), max || c > state.gold);
+    }
+    add('Luk', false, () => { state.selected = null; });
+    bar.hidden = false;
+    return;
+  }
   const exists = b && (isWall(b) ? state.walls.get(b.key) === b : state.buildings.get(idx(b.x, b.y)) === b);
   if (exists && state.phase === 'build') {
     const d = dataOf(b);
@@ -1151,7 +1192,7 @@ function draw() {
   }
 
   // valgt bygning
-  const sel = state.selected;
+  const sel = state.selected === 'castle' ? null : state.selected;
   if (sel && !isWall(sel) && state.buildings.get(idx(sel.x, sel.y)) === sel) {
     ctx.strokeStyle = '#facc15'; ctx.lineWidth = 3;
     ctx.strokeRect(sel.x * tile, sel.y * tile, tile, tile);
@@ -1175,6 +1216,7 @@ function draw() {
   const c = CONFIG.castle;
   ctx.fillStyle = '#7c5a3a';
   ctx.fillRect(c.x * tile, c.y * tile, c.w * tile, c.h * tile);
+  if (state.selected === 'castle') { ctx.strokeStyle = '#facc15'; ctx.lineWidth = 3; ctx.strokeRect(c.x * tile, c.y * tile, c.w * tile, c.h * tile); }
   text('BORG', (c.x + c.w / 2) * tile, (c.y + c.h / 2 - 0.5) * tile, tile * 0.6, '#fff');
   text(`${state.lives}`, (c.x + c.w / 2) * tile, (c.y + c.h / 2 + 0.6) * tile, tile * 0.55, '#fde68a');
 
@@ -1218,7 +1260,7 @@ function draw() {
       circle(goal.x, goal.y, 0.15, null, '#16a34a');
     }
     circle(h.x, h.y, 0.4, '#16a34a', '#052e16');
-    hpBar(h.x, h.y, h.hp / CONFIG.hero.hp, 0.65);
+    hpBar(h.x, h.y, h.hp / heroMax(), 0.65);
   } else {
     const s = CONFIG.heroSpawn;
     circle(s.x, s.y, 0.4, null, '#dc2626');
@@ -1233,7 +1275,7 @@ function drawHud() {
   $('sWave').textContent = `Runde ${state.wave}/${CONFIG.wavesPerLevel}`;
   $('sCastle').textContent = `Borg: ${state.lives}`;
   $('sGold').textContent = `Guld: ${state.gold}`;
-  $('sHero').textContent = h.alive ? `Helt: ${Math.max(0, Math.ceil(h.hp))}/${CONFIG.hero.hp}` : `Helt: tilbage om ${Math.ceil(h.respawn)} s`;
+  $('sHero').textContent = h.alive ? `Helt: ${Math.max(0, Math.ceil(h.hp))}/${heroMax()}` : `Helt: tilbage om ${Math.ceil(h.respawn)} s`;
   const building = state.phase === 'build';
   $('bStart').disabled = !building;
   $('bBuild').disabled = !building;
