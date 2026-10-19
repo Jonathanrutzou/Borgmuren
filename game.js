@@ -13,7 +13,8 @@ const CONFIG = {
   heroSpawn: { x: 27.5, y: 12 },
   // knight.tres (farten er fordoblet)
   hero: { hp: 220, damage: 12, armor: 3, attackInterval: 0.8, speed: 3.0,
-          engageRange: 0.8, threatRange: 2.0, respawnSec: 10 },
+          engageRange: 0.8, threatRange: 2.0, respawnSec: 10, regenPerSec: 0.005 },  // 0,5 % liv pr. sekund
+  soldierRespawnSec: 10,   // døde soldater kommer tilbage én ad gangen
   buildingHp: 100,         // liv for bygninger; monstrene kan smadre dem, men ikke mure
   sellRatio: 0.6,          // ældre bygninger sælges for 60 %; nye i samme byggefase for fuld pris
   spawnIntervalSec: 1.2,
@@ -32,8 +33,8 @@ const BUILDINGS = {
   fence:      { name: 'Hegn', cost: 4, edge: true, width: 0.12, upgradesTo: 'stone_wall', color: '#b45309' },
   stone_wall: { name: 'Stenmur', cost: 10, edge: true, width: 0.24, upgradesTo: 'tall_wall', color: '#6b7280' },
   tall_wall:  { name: 'Høj mur', cost: 30, edge: true, width: 0.34, color: '#374151' },
-  gate:       { name: 'Port', cost: 25, edge: true, width: 0.24, hold: 2.0, upgradesTo: 'iron_gate', color: '#92400e' },
-  iron_gate:  { name: 'Jernport', cost: 55, edge: true, width: 0.3, hold: 3.5, color: '#44403c' },
+  gate:       { name: 'Port', cost: 25, edge: true, width: 0.24, hold: 2.0, gate: true, upgradesTo: 'iron_gate', color: '#92400e' },
+  iron_gate:  { name: 'Jernport', cost: 55, edge: true, width: 0.3, hold: 3.5, gate: true, color: '#44403c' },
   net:        { name: 'Klæbenet', cost: 8, blocks: false, slow: 0.4, color: '#a8a29e', label: 'N' },
   archer:     { name: 'Bueskyttetårn', cost: 40, blocks: true, tower: { damage: 10, range: 3.0, interval: 0.5 }, upgradesTo: 'archer_2', color: '#15803d', label: 'B' },
   archer_2:   { name: 'Langbuetårn', cost: 95, blocks: true, tower: { damage: 16, range: 3.4, interval: 0.5 }, tier: 2, color: '#166534', label: 'B' },
@@ -41,10 +42,10 @@ const BUILDINGS = {
   cannon_2:   { name: 'Stor kanon', cost: 160, blocks: true, tower: { damage: 35, range: 2.6, interval: 1.8, splash: 1.1 }, tier: 2, color: '#111827', label: 'K' },
   mage:       { name: 'Magertårn', cost: 130, blocks: true, tower: { damage: 28, range: 50, interval: 3.0, magic: true }, upgradesTo: 'mage_2', color: '#7c3aed', label: 'T' },
   mage_2:     { name: 'Ærkemagertårn', cost: 240, blocks: true, tower: { damage: 50, range: 50, interval: 2.4, magic: true }, tier: 2, color: '#5b21b6', label: 'T' },
-  barracks:   { name: 'Kaserne', cost: 60, blocks: true, soldiers: { count: 2, hp: 90, damage: 7, armor: 1, interval: 1.0, respawn: 8 }, upgradesTo: 'barracks_2', color: '#0e7490', label: 'Ka' },
-  barracks_2: { name: 'Stor kaserne', cost: 120, blocks: true, soldiers: { count: 3, hp: 130, damage: 10, armor: 2, interval: 0.9, respawn: 7 }, upgradesTo: 'barracks_3', tier: 2, color: '#155e75', label: 'Ka' },
-  barracks_3: { name: 'Fæstningskaserne', cost: 210, blocks: true, soldiers: { count: 4, hp: 170, damage: 13, armor: 3, interval: 0.9, respawn: 6 }, tier: 3, color: '#164e63', label: 'Ka' },
-  archer_camp:{ name: 'Bueskyttelejr', cost: 70, blocks: true, soldiers: { count: 2, hp: 60, damage: 6, armor: 0, interval: 0.9, respawn: 8, range: 2.5 }, color: '#4d7c0f', label: 'BL' },
+  barracks:   { name: 'Kaserne', cost: 60, blocks: true, soldiers: { count: 2, hp: 90, damage: 7, armor: 1, interval: 1.0 }, upgradesTo: 'barracks_2', color: '#0e7490', label: 'Ka' },
+  barracks_2: { name: 'Stor kaserne', cost: 120, blocks: true, soldiers: { count: 3, hp: 130, damage: 10, armor: 2, interval: 0.9 }, upgradesTo: 'barracks_3', tier: 2, color: '#155e75', label: 'Ka' },
+  barracks_3: { name: 'Fæstningskaserne', cost: 210, blocks: true, soldiers: { count: 4, hp: 170, damage: 13, armor: 3, interval: 0.9 }, tier: 3, color: '#164e63', label: 'Ka' },
+  archer_camp:{ name: 'Bueskyttelejr', cost: 70, blocks: true, soldiers: { count: 2, hp: 60, damage: 6, armor: 0, interval: 0.9, range: 2.5 }, color: '#4d7c0f', label: 'BL' },
   smithy:     { name: 'Smedje', cost: 80, blocks: true, boost: 0.25, boostRadius: 2.0, color: '#9a3412', label: 'Sm' },
   farm:       { name: 'Gård', cost: 30, blocks: true, income: 10, color: '#ca8a04', label: 'G' },
 };
@@ -138,7 +139,7 @@ function newGame() {
 
 function newHero() {
   const s = CONFIG.heroSpawn, h = CONFIG.hero;
-  return { x: s.x, y: s.y, hp: h.hp, alive: true, cooldown: 0, respawn: 0, path: [], opponent: null };
+  return { x: s.x, y: s.y, hp: h.hp, alive: true, cooldown: 0, path: [], opponent: null };
 }
 
 const buildingAt = (x, y) => (inBounds(x, y) ? state.buildings.get(idx(x, y)) : undefined);
@@ -198,11 +199,14 @@ function edgeAtPoint(p) {
 
 // ---------- bevægelse ----------
 // who: 'monster' (porte koster ventetid, bygninger kan smadres, borgen er målet),
-//      'walker'  (helt og soldater: går frit gennem porte, ikke ind i bygninger eller borgen),
+//      'walker'  (soldater: går frit gennem porte, ikke ind i bygninger eller borgen),
+//      'hero'    (som walker, men kan også gå gennem opgraderede hegn og mure),
 //      'open'    (som walker, men borgen tæller som mål – til reglen om en åben vej).
+const isWalker = who => who === 'walker' || who === 'hero';
+
 function cellCost(x, y, who) {
   if (!inBounds(x, y)) return Infinity;
-  if (isCastle(x, y)) return who === 'walker' ? Infinity : 1;
+  if (isCastle(x, y)) return isWalker(who) ? Infinity : 1;
   const b = buildingAt(x, y);
   if (!b) return 1;
   const d = dataOf(b);
@@ -214,7 +218,7 @@ function edgeCost(ax, ay, bx, by, who) {
   const w = wallBetween(ax, ay, bx, by);
   if (!w) return 0;
   const d = dataOf(w);
-  if (!d.hold) return Infinity;           // mure kan ingen komme igennem
+  if (!d.hold) return who === 'hero' && w.heroDoor ? 0 : Infinity;   // kun helten kan gå gennem opgraderede mure
   return who === 'monster' ? d.hold : 0;  // porte holder kun monstrene tilbage
 }
 
@@ -231,7 +235,7 @@ function stepCost(ax, ay, dx, dy, who) {
   if (isBlocking(bx, by)) return Infinity;
   for (const [mx, my] of [[bx, ay], [ax, by]]) {
     if (!inBounds(mx, my) || isBlocking(mx, my)) return Infinity;
-    if (isCastle(mx, my) && who === 'walker') return Infinity;
+    if (isCastle(mx, my) && isWalker(who)) return Infinity;
     if (wallBetween(ax, ay, mx, my) || wallBetween(mx, my, bx, by)) return Infinity;
   }
   return SQ2 * c;
@@ -320,7 +324,7 @@ function edgePassable(ax, ay, bx, by, who, passed) {
   const w = wallBetween(ax, ay, bx, by);
   if (!w) return true;
   const d = dataOf(w);
-  if (!d.hold) return false;
+  if (!d.hold) return who === 'hero' && !!w.heroDoor;
   return who !== 'monster' || (passed && passed.has(w.key));
 }
 
@@ -331,7 +335,7 @@ function segClear(x0, y0, x1, y1, who, passed) {
     const nx = Math.floor(x0 + (x1 - x0) * s / steps), ny = Math.floor(y0 + (y1 - y0) * s / steps);
     if (nx === cx && ny === cy) continue;
     if (!inBounds(nx, ny) || isBlocking(nx, ny)) return false;
-    if (isCastle(nx, ny) && who === 'walker') return false;
+    if (isCastle(nx, ny) && isWalker(who)) return false;
     if (nx !== cx && ny !== cy) {   // gennem et hjørne
       if (isBlocking(nx, cy) || isBlocking(cx, ny)) return false;
       if (!edgePassable(cx, cy, nx, cy, who, passed) || !edgePassable(nx, cy, nx, ny, who, passed) ||
@@ -344,7 +348,7 @@ function segClear(x0, y0, x1, y1, who, passed) {
 
 // Heltens og soldaternes vej: korteste vej på kryds og tværs (8 retninger), rettet ud
 // til lige linjer, hvor der er frit. Kan målet ikke nås, går de så tæt på som muligt.
-function findPath(from, to) {
+function findPath(from, to, who = 'walker') {
   const clampC = (v, max) => Math.min(max - 1, Math.max(0, Math.floor(v)));
   const sx = clampC(from.x, COLS), sy = clampC(from.y, ROWS);
   const gx = clampC(to.x, COLS), gy = clampC(to.y, ROWS);
@@ -361,7 +365,7 @@ function findPath(from, to) {
     const e = Math.hypot(x + 0.5 - to.x, y + 0.5 - to.y);
     if (e < bestD) { bestD = e; best = i; }
     for (const [dx, dy] of DIRS8) {
-      const c = stepCost(x, y, dx, dy, 'walker');
+      const c = stepCost(x, y, dx, dy, who);
       if (c === Infinity) continue;
       const ni = idx(x + dx, y + dy);
       if (cd + c < d[ni]) { d[ni] = cd + c; prev[ni] = i; heapPush(heap, [cd + c, ni]); }
@@ -379,7 +383,7 @@ function findPath(from, to) {
   let cur = from;
   for (let i = 0; i < pts.length;) {
     let j = pts.length - 1;
-    while (j > i && !losClear(cur, pts[j], 'walker')) j--;
+    while (j > i && !losClear(cur, pts[j], who)) j--;
     out.push(pts[j]); cur = pts[j]; i = j + 1;
   }
   return out;
@@ -475,6 +479,7 @@ function upgrade(b) {
   const c = upgradeCost(b);
   if (c === null || c > state.gold) return;
   state.gold -= c; b.spent += c;
+  if (isWall(b) && !dataOf(b).gate) b.heroDoor = true;   // helten kan gå gennem opgraderede hegn og mure
   b.id = dataOf(b).upgradesTo;
   if (!isWall(b)) b.hp = CONFIG.buildingHp;
   if (dataOf(b).soldiers) makeSoldiers(b);
@@ -512,7 +517,7 @@ function makeSoldiers(b) {
   posts(b).forEach((p, k) => {
     const from = old[k] || defaultRally(b);
     state.soldiers.push({ b, stats: st, post: p, x: from.x, y: from.y, hp: st.hp, alive: true,
-                          cooldown: 0, respawn: 0, opponent: null, path: [], idle: false });
+                          cooldown: 0, opponent: null, path: [], idle: false });
   });
 }
 
@@ -549,6 +554,7 @@ function endWave() {
   if (!h.alive) Object.assign(h, newHero());
   h.hp = CONFIG.hero.hp; h.opponent = null;
   for (const s of state.soldiers) {
+    s.b.reviving = null;
     if (!s.alive) { s.x = s.post.x; s.y = s.post.y; }
     s.alive = true; s.hp = s.stats.hp; s.opponent = null; s.path = []; s.idle = false;
   }
@@ -615,6 +621,7 @@ function updateHero(dt) {
     return;
   }
   h.cooldown = Math.max(0, h.cooldown - dt);
+  h.hp = Math.min(cfg.hp, h.hp + cfg.hp * cfg.regenPerSec * dt);   // helten heler langsomt
   followPath(h, cfg.speed, dt);
 
   if (state.phase !== 'wave') return;
@@ -622,7 +629,7 @@ function updateHero(dt) {
   const o = h.opponent;
   if (o && (o.hp <= 0 || o.done || dist(h, o) > cfg.engageRange * 1.5)) releaseOpponent(h);
   if (!h.opponent) {
-    h.opponent = nearestMonster(h, cfg.engageRange, m => !m.heldBy && losClear(h, m, 'walker'));
+    h.opponent = nearestMonster(h, cfg.engageRange, m => !m.heldBy && losClear(h, m, 'hero'));
     if (h.opponent) h.opponent.heldBy = h;
   }
   if (h.opponent && h.cooldown <= 0) {
@@ -635,7 +642,7 @@ function updateHero(dt) {
 function moveHero(target) {
   const h = state.hero;
   if (state.phase === 'over' || state.phase === 'won' || !h.alive) return;
-  h.path = findPath(h, target);
+  h.path = findPath(h, target, 'hero');
 }
 
 function heroTakeDamage(raw) {
@@ -650,8 +657,11 @@ function heroTakeDamage(raw) {
 function updateSoldier(s, dt) {
   const st = s.stats;
   if (!s.alive) {
+    if (s.b.reviving && s.b.reviving !== s) return;   // kun én soldat kommer tilbage ad gangen
+    s.b.reviving = s;
     s.respawn -= dt;
     if (s.respawn <= 0) {
+      s.b.reviving = null;
       const r = defaultRally(s.b);
       Object.assign(s, { alive: true, hp: st.hp, x: r.x, y: r.y, path: [], idle: false });
     }
@@ -698,7 +708,7 @@ function updateSoldier(s, dt) {
 function soldierTakeDamage(s, raw) {
   s.hp -= physical(raw, s.stats.armor);
   if (s.hp <= 0) {
-    s.alive = false; s.respawn = s.stats.respawn;
+    s.alive = false; s.respawn = CONFIG.soldierRespawnSec;
     releaseOpponent(s);
   }
 }
@@ -935,7 +945,7 @@ $('bBuild').onclick = () => {
   state.selected = null; state.rallyFor = null;
   buildToolbar();
 };
-$('bSpeed').onclick = () => { state.speed = state.speed === 1 ? 2 : 1; };
+$('bSpeed').onclick = () => { state.speed = { 1: 2, 2: 5, 5: 1 }[state.speed]; };
 $('bStart').onclick = () => { startWave(); buildToolbar(); };
 $('bRestart').onclick = () => { newGame(); buildToolbar(); };
 
@@ -1022,6 +1032,12 @@ function drawWall(w, highlight) {
   if (d.hold) ctx.setLineDash([tile * 0.22, tile * 0.1]);   // porte er stiplede
   ctx.beginPath(); ctx.moveTo(x1 * tile, y1 * tile); ctx.lineTo(x2 * tile, y2 * tile); ctx.stroke();
   ctx.setLineDash([]);
+  if (w.heroDoor) {   // stiplet: helten kan gå igennem
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = Math.max(2, d.width * tile * 0.45);
+    ctx.lineCap = 'round'; ctx.setLineDash([0.1, tile * 0.2]);
+    ctx.beginPath(); ctx.moveTo(x1 * tile, y1 * tile); ctx.lineTo(x2 * tile, y2 * tile); ctx.stroke();
+    ctx.setLineDash([]);
+  }
   ctx.lineCap = 'butt';
 }
 
@@ -1160,7 +1176,7 @@ function drawHud() {
   $('bBuild').classList.toggle('active', building && state.buildOpen);
   $('bBuild').textContent = building && state.buildOpen ? 'Luk byg' : 'Byg';
   $('bSpeed').textContent = `Tempo x${state.speed}`;
-  $('bSpeed').classList.toggle('active', state.speed === 2);
+  $('bSpeed').classList.toggle('active', state.speed > 1);
 
   let msg = '';
   if (state.messageTimer > 0) msg = state.message;
