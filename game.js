@@ -17,6 +17,8 @@ const CONFIG = {
   soldierRespawnSec: 10,   // døde soldater kommer tilbage én ad gangen
   buildingHp: 100,         // liv for bygninger; monstrene kan smadre dem og porte, men ikke mure
   towerThreatRange: 2.0,   // monstre går efter tårne, de kan nå inden for så mange felter
+  climbCost: 3,            // ekstra vejpris for at kravle over et hegn
+  climbSpeed: 0.35,        // øglen kravler med 35 % af sin fart
   sellRatio: 0.6,          // ældre bygninger sælges for 60 %; nye i samme byggefase for fuld pris
   spawnIntervalSec: 1.2,
   monsterHpGrowth: 0.15,   // +15 % liv pr. bølge
@@ -26,12 +28,16 @@ const CONFIG = {
 const MONSTERS = {
   blue: { name: 'Grunt',  hp: 35, armor: 1, speed: 1.0, bounty: 5, castleDamage: 1, damage: 5, interval: 1.0, color: '#3b82f6', r: 0.3 },
   red:  { name: 'Runner', hp: 20, armor: 0, speed: 1.8, bounty: 3, castleDamage: 1, damage: 3, interval: 1.0, color: '#ef4444', r: 0.25 },
+  // lizard.tres: kravler over hegn (langsomt), men ikke over mure
+  lizard: { name: 'Øgle', hp: 35, armor: 1, speed: 0.9, bounty: 6, castleDamage: 1, damage: 4, interval: 1.0, color: '#f97316', r: 0.24, move: 'climb' },
+  // bat.tres: flyver lige mod borgen hen over alt
+  bat:  { name: 'Flagermus', hp: 18, armor: 0, speed: 1.3, bounty: 6, castleDamage: 1, damage: 2, interval: 1.0, color: '#a855f7', r: 0.22, move: 'fly' },
 };
 
 // content/buildings/*.tres – kun Gård som pengebygning (ingen vindmølle eller miner).
 // edge: ligger på stregen mellem to felter (mure og porte), ikke i et felt.
 const BUILDINGS = {
-  fence:      { name: 'Hegn', cost: 4, edge: true, width: 0.12, upgradesTo: 'stone_wall', color: '#b45309' },
+  fence:      { name: 'Hegn', cost: 4, edge: true, climbable: true, width: 0.12, upgradesTo: 'stone_wall', color: '#b45309' },
   stone_wall: { name: 'Stenmur', cost: 10, edge: true, width: 0.24, upgradesTo: 'tall_wall', color: '#6b7280' },
   tall_wall:  { name: 'Høj mur', cost: 30, edge: true, width: 0.34, color: '#374151' },
   gate:       { name: 'Port', cost: 25, edge: true, width: 0.24, hp: 150, gate: true, upgradesTo: 'iron_gate', color: '#92400e' },
@@ -39,8 +45,8 @@ const BUILDINGS = {
   net:        { name: 'Klæbenet', cost: 8, blocks: false, slow: 0.4, color: '#a8a29e', label: 'N' },
   archer:     { name: 'Bueskyttetårn', cost: 40, blocks: true, tower: { damage: 10, range: 3.0, interval: 0.5 }, upgradesTo: 'archer_2', color: '#15803d', label: 'B' },
   archer_2:   { name: 'Langbuetårn', cost: 95, blocks: true, tower: { damage: 16, range: 3.4, interval: 0.5 }, tier: 2, color: '#166534', label: 'B' },
-  cannon:     { name: 'Kanontårn', cost: 70, blocks: true, tower: { damage: 18, range: 2.3, interval: 1.8, splash: 0.9 }, upgradesTo: 'cannon_2', color: '#1f2937', label: 'K' },
-  cannon_2:   { name: 'Stor kanon', cost: 160, blocks: true, tower: { damage: 35, range: 2.6, interval: 1.8, splash: 1.1 }, tier: 2, color: '#111827', label: 'K' },
+  cannon:     { name: 'Kanontårn', cost: 70, blocks: true, tower: { damage: 18, range: 2.3, interval: 1.8, splash: 0.9, ground: true }, upgradesTo: 'cannon_2', color: '#1f2937', label: 'K' },
+  cannon_2:   { name: 'Stor kanon', cost: 160, blocks: true, tower: { damage: 35, range: 2.6, interval: 1.8, splash: 1.1, ground: true }, tier: 2, color: '#111827', label: 'K' },
   mage:       { name: 'Magertårn', cost: 130, blocks: true, tower: { damage: 28, range: 50, interval: 3.0, magic: true }, upgradesTo: 'mage_2', color: '#7c3aed', label: 'T' },
   mage_2:     { name: 'Ærkemagertårn', cost: 240, blocks: true, tower: { damage: 50, range: 50, interval: 2.4, magic: true }, tier: 2, color: '#5b21b6', label: 'T' },
   barracks:   { name: 'Kaserne', cost: 60, blocks: true, soldiers: { count: 2, hp: 90, damage: 7, armor: 1, interval: 1.0 }, upgradesTo: 'barracks_2', color: '#0e7490', label: 'Ka' },
@@ -58,9 +64,8 @@ const SOLDIER_SPEED = 1.5;
 // Hvilke væsner der kommer i bølge n (1, 2, 3 ...).
 function waveMonsters(n) {
   const list = [];
-  const blue = 4 + 4 * n, red = n === 1 ? 0 : 4 * n;
-  for (let i = 0; i < blue; i++) list.push('blue');
-  for (let i = 0; i < red; i++) list.push('red');
+  const count = { blue: 4 + 4 * n, red: n >= 2 ? 4 * n : 0, lizard: n >= 3 ? 2 * n : 0, bat: n >= 4 ? 2 * n : 0 };
+  for (const [kind, k] of Object.entries(count)) for (let i = 0; i < k; i++) list.push(kind);
   for (let i = list.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [list[i], list[j]] = [list[j], list[i]];
@@ -199,11 +204,14 @@ function edgeAtPoint(p) {
 }
 
 // ---------- bevægelse ----------
-// who: 'monster' (porte koster ventetid, bygninger kan smadres, borgen er målet),
+// who: 'monster' (bygninger og porte kan smadres, borgen er målet),
+//      'climber' (som monster, men kan kravle over hegn),
 //      'walker'  (soldater: går frit gennem porte, ikke ind i bygninger eller borgen),
 //      'hero'    (som walker, men kan også gå gennem opgraderede hegn og mure),
 //      'open'    (som walker, men borgen tæller som mål – til reglen om en åben vej).
 const isWalker = who => who === 'walker' || who === 'hero';
+const isMonster = who => who === 'monster' || who === 'climber';
+const moverOf = m => (m.s.move === 'climb' ? 'climber' : 'monster');
 
 function cellCost(x, y, who) {
   if (!inBounds(x, y)) return Infinity;
@@ -211,7 +219,7 @@ function cellCost(x, y, who) {
   const b = buildingAt(x, y);
   if (!b) return 1;
   const d = dataOf(b);
-  if (d.blocks) return who === 'monster' ? 1 + b.hp / 5 : Infinity;   // ca. sekunder om at smadre den
+  if (d.blocks) return isMonster(who) ? 1 + b.hp / 5 : Infinity;   // ca. sekunder om at smadre den
   return 1 / (d.slow || 1);
 }
 
@@ -219,8 +227,11 @@ function edgeCost(ax, ay, bx, by, who) {
   const w = wallBetween(ax, ay, bx, by);
   if (!w) return 0;
   const d = dataOf(w);
-  if (!d.gate) return who === 'hero' && w.heroDoor ? 0 : Infinity;   // kun helten kan gå gennem opgraderede mure
-  return who === 'monster' ? 1 + w.hp / 5 : 0;   // monstrene skal smadre porten først
+  if (!d.gate) {
+    if (who === 'climber' && d.climbable) return CONFIG.climbCost;   // øglen kravler over hegn
+    return who === 'hero' && w.heroDoor ? 0 : Infinity;               // kun helten kan gå gennem opgraderede mure
+  }
+  return isMonster(who) ? 1 + w.hp / 5 : 0;   // monstrene skal smadre porten først
 }
 
 // Pris for at gå ét skridt (også på skrå) fra (ax,ay) i retning (dx,dy).
@@ -242,8 +253,14 @@ function stepCost(ax, ay, dx, dy, who) {
   return SQ2 * c;
 }
 
-// Afstandsfelt til borgen for monstrene (Dijkstra med 8 retninger).
+// Afstandsfelter til borgen for gående og kravlende monstre (Dijkstra med 8 retninger).
 function recomputeField() {
+  state.fields = { monster: buildField('monster'), climber: buildField('climber') };
+  state.route = previewRoute();
+  if (state.monsters) for (const m of state.monsters) m.repath = 0;
+}
+
+function buildField(who) {
   const n = COLS * ROWS;
   const field = new Float64Array(n).fill(Infinity);
   const heap = [];
@@ -257,23 +274,22 @@ function recomputeField() {
     for (const [dx, dy] of DIRS8) {
       const ax = bx - dx, ay = by - dy;
       if (!inBounds(ax, ay) || isCastle(ax, ay)) continue;
-      const nd = d + stepCost(ax, ay, dx, dy, 'monster');
+      const nd = d + stepCost(ax, ay, dx, dy, who);
       const ai = idx(ax, ay);
       if (nd < field[ai]) { field[ai] = nd; heapPush(heap, [nd, ai]); }
     }
   }
-  state.field = field;
-  state.route = previewRoute();
-  if (state.monsters) for (const m of state.monsters) m.repath = 0;
+  return field;
 }
 
-function nextStep(cx, cy) {
+function nextStep(cx, cy, who = 'monster') {
+  const field = state.fields[who];
   let best = null, bd = Infinity;
   for (const [dx, dy] of DIRS8) {
     const nx = cx + dx, ny = cy + dy;
-    const c = stepCost(cx, cy, dx, dy, 'monster');
+    const c = stepCost(cx, cy, dx, dy, who);
     if (c === Infinity) continue;
-    const d = c + (isCastle(nx, ny) ? 0 : state.field[idx(nx, ny)]);
+    const d = c + (isCastle(nx, ny) ? 0 : field[idx(nx, ny)]);
     if (d < bd) { bd = d; best = { x: nx, y: ny, dx, dy }; }
   }
   return best;
@@ -326,7 +342,7 @@ function edgePassable(ax, ay, bx, by, who) {
   if (!w) return true;
   const d = dataOf(w);
   if (!d.gate) return who === 'hero' && !!w.heroDoor;
-  return who !== 'monster';
+  return !isMonster(who);
 }
 
 function segClear(x0, y0, x1, y1, who) {
@@ -633,7 +649,7 @@ function updateHero(dt) {
   const o = h.opponent;
   if (o && (o.hp <= 0 || o.done || dist(h, o) > cfg.engageRange * 1.5)) releaseOpponent(h);
   if (!h.opponent) {
-    h.opponent = nearestMonster(h, cfg.engageRange, m => !m.heldBy && losClear(h, m, 'hero'));
+    h.opponent = nearestMonster(h, cfg.engageRange, m => !m.heldBy && m.s.move !== 'fly' && losClear(h, m, 'hero'));
     if (h.opponent) h.opponent.heldBy = h;
   }
   if (h.opponent && h.cooldown <= 0) {
@@ -687,7 +703,7 @@ function updateSoldier(s, dt) {
       if (!s.opponent) {
         let best = null, bd = Infinity;
         for (const m of state.monsters) {
-          if (m.hp <= 0 || m.heldBy || dist(m, s.post) > SOLDIER_GUARD) continue;
+          if (m.hp <= 0 || m.heldBy || m.s.move === 'fly' || dist(m, s.post) > SOLDIER_GUARD) continue;
           const d = dist(s, m);
           if (d < bd && losClear(s, m, 'walker')) { bd = d; best = m; }
         }
@@ -730,12 +746,13 @@ function updateTower(b, dt) {
   b.cooldown = Math.max(0, b.cooldown - dt);
   if (b.cooldown > 0) return;
   const c = center(b.x, b.y);
-  const target = nearestMonster(c, t.range);
+  const canHit = m => !t.ground || m.s.move !== 'fly';   // kanoner rammer ikke flyvende
+  const target = nearestMonster(c, t.range, canHit);
   if (!target) return;
   b.cooldown = t.interval;
   const dmg = Math.round(t.damage * towerBoost(b));
   const hit = m => { m.hp -= t.magic ? dmg : physical(dmg, m.s.armor); };
-  if (t.splash) { for (const m of state.monsters) if (m.hp > 0 && dist(m, target) <= t.splash) hit(m); }
+  if (t.splash) { for (const m of state.monsters) if (m.hp > 0 && canHit(m) && dist(m, target) <= t.splash) hit(m); }
   else hit(target);
   state.shots.push({ x1: c.x, y1: c.y, x2: target.x, y2: target.y, t: 0.12, color: t.magic ? '#7c3aed' : '#111', splash: t.splash });
 }
@@ -743,14 +760,19 @@ function updateTower(b, dt) {
 // Hvor monsteret skal hen nu: det fjerneste punkt på vejen, det kan se i lige linje.
 // Står der en bygning eller en port lige foran, skal det smadre den først.
 function monsterWaypoint(m) {
+  const who = moverOf(m);
   let cx = Math.floor(m.x), cy = Math.floor(m.y);
   const pts = [];
   for (let k = 0; k < 20; k++) {
-    const n = nextStep(cx, cy);
+    const n = nextStep(cx, cy, who);
     if (!n) break;
-    const gate = (!n.dx || !n.dy) ? wallBetween(cx, cy, n.x, n.y) : null;
-    if (isBlocking(n.x, n.y) || gate) {
-      if (k === 0) return { kind: 'attack', at: center(cx, cy), obj: gate || buildingAt(n.x, n.y) };
+    const wall = (!n.dx || !n.dy) ? wallBetween(cx, cy, n.x, n.y) : null;
+    if (wall && !dataOf(wall).gate) {   // et hegn, øglen kravler over
+      if (k === 0) return { kind: 'climb', at: center(cx, cy), p: center(n.x, n.y) };
+      break;
+    }
+    if (isBlocking(n.x, n.y) || wall) {
+      if (k === 0) return { kind: 'attack', at: center(cx, cy), obj: wall || buildingAt(n.x, n.y) };
       break;
     }
     pts.push(center(n.x, n.y));
@@ -758,7 +780,7 @@ function monsterWaypoint(m) {
     cx = n.x; cy = n.y;
   }
   if (!pts.length) return null;
-  for (let j = pts.length - 1; j > 0; j--) if (losClear(m, pts[j], 'monster')) return { kind: 'move', p: pts[j] };
+  for (let j = pts.length - 1; j > 0; j--) if (losClear(m, pts[j], who)) return { kind: 'move', p: pts[j] };
   return { kind: 'move', p: pts[0] };
 }
 
@@ -766,6 +788,18 @@ function updateMonster(m, dt) {
   const s = m.s;
   m.cooldown = Math.max(0, m.cooldown - dt);
   const h = state.hero;
+
+  if (s.move === 'fly') {   // flagermus flyver lige mod borgen hen over alt
+    const c = CONFIG.castle;
+    const tx = Math.min(Math.max(m.x, c.x), c.x + c.w), ty = Math.min(Math.max(m.y, c.y), c.y + c.h);
+    moveToward(m, tx, ty, s.speed * dt);
+    if (isCastle(Math.floor(m.x), Math.floor(m.y))) { state.lives -= s.castleDamage; m.done = true; }
+    return;
+  }
+  if (m.climbTo) {          // midt i at kravle over et hegn
+    if (moveToward(m, m.climbTo.x, m.climbTo.y, s.speed * CONFIG.climbSpeed * dt)) { m.climbTo = null; m.repath = 0; }
+    return;
+  }
 
   // holdt fast af helten eller en soldat: slås med den
   if (m.heldBy) {
@@ -783,7 +817,7 @@ function updateMonster(m, dt) {
   }
 
   // Borgspillet: monstre tæt på helten går efter ham først (ikke gennem mure)
-  if (h.alive && dist(h, m) <= CONFIG.hero.threatRange && losClear(m, h, 'monster')) {
+  if (h.alive && dist(h, m) <= CONFIG.hero.threatRange && losClear(m, h, moverOf(m))) {
     if (dist(h, m) > CONFIG.hero.engageRange * 0.9) moveToward(m, h.x, h.y, s.speed * dt);
     else if (m.cooldown <= 0) { m.cooldown = s.interval; heroTakeDamage(s.damage); }
     m.repath = 0;
@@ -810,6 +844,7 @@ function updateMonster(m, dt) {
     return;
   }
   if (!moveToward(m, wp.at.x, wp.at.y, speed * dt)) return;   // stil dig op foran
+  if (wp.kind === 'climb') { m.climbTo = wp.p; return; }
   if (!stillThere(wp.obj)) { m.repath = 0; return; }           // smadr bygningen eller porten (aldrig mure)
   smash(m, wp.obj);
 }
@@ -832,7 +867,7 @@ function towerTarget(m) {
     if (!dataOf(b).tower) continue;
     const p = { x: Math.min(Math.max(m.x, b.x - 0.3), b.x + 1.3), y: Math.min(Math.max(m.y, b.y - 0.3), b.y + 1.3) };
     const d = dist(m, p);
-    if (d <= bd && losClear(m, p, 'monster')) { bd = d; best = { b, p }; }
+    if (d <= bd && losClear(m, p, moverOf(m))) { bd = d; best = { b, p }; }
   }
   return best;
 }
@@ -1152,7 +1187,12 @@ function draw() {
 
   // monstre
   for (const m of state.monsters) {
-    circle(m.x, m.y, m.s.r, m.s.color);
+    if (m.s.move === 'fly') {   // flagermus: en ruder
+      const r = m.s.r * tile * 1.3;
+      ctx.fillStyle = m.s.color;
+      ctx.beginPath(); ctx.moveTo(m.x * tile, m.y * tile - r); ctx.lineTo(m.x * tile + r * 1.4, m.y * tile);
+      ctx.lineTo(m.x * tile, m.y * tile + r); ctx.lineTo(m.x * tile - r * 1.4, m.y * tile); ctx.closePath(); ctx.fill();
+    } else circle(m.x, m.y, m.s.r, m.s.color);
     if (m.hp < m.maxHp) hpBar(m.x, m.y, m.hp / m.maxHp);
   }
 
