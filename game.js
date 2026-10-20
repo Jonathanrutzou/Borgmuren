@@ -29,12 +29,12 @@ const CONFIG = {
 
 // grunt.tres og runner.tres
 const MONSTERS = {
-  blue: { name: 'Grunt',  hp: 35, armor: 1, speed: 1.0, bounty: 5, castleDamage: 1, damage: 5, interval: 1.0, color: '#3b82f6', r: 0.3 },
-  red:  { name: 'Runner', hp: 20, armor: 0, speed: 1.8, bounty: 3, castleDamage: 1, damage: 3, interval: 1.0, color: '#ef4444', r: 0.25 },
+  blue: { name: 'Grunt',  hp: 35, armor: 1, speed: 1.0, bounty: 3, castleDamage: 1, damage: 5, interval: 1.0, color: '#3b82f6', r: 0.3 },
+  red:  { name: 'Runner', hp: 20, armor: 0, speed: 1.8, bounty: 2, castleDamage: 1, damage: 3, interval: 1.0, color: '#ef4444', r: 0.25 },
   // lizard.tres: kravler over hegn (langsomt), men ikke over mure
-  lizard: { name: 'Øgle', hp: 35, armor: 1, speed: 0.9, bounty: 6, castleDamage: 1, damage: 4, interval: 1.0, color: '#f97316', r: 0.24, move: 'climb' },
+  lizard: { name: 'Øgle', hp: 35, armor: 1, speed: 0.9, bounty: 4, castleDamage: 1, damage: 4, interval: 1.0, color: '#f97316', r: 0.24, move: 'climb' },
   // bat.tres: flyver lige mod borgen hen over alt
-  bat:  { name: 'Flagermus', hp: 18, armor: 0, speed: 1.3, bounty: 6, castleDamage: 1, damage: 2, interval: 1.0, color: '#a855f7', r: 0.22, move: 'fly' },
+  bat:  { name: 'Flagermus', hp: 18, armor: 0, speed: 1.3, bounty: 4, castleDamage: 1, damage: 2, interval: 1.0, color: '#a855f7', r: 0.22, move: 'fly' },
 };
 
 // content/buildings/*.tres – kun Gård som pengebygning (ingen vindmølle eller miner).
@@ -78,8 +78,10 @@ const SOLDIER_SPEED = 1.5;
 function waveMonsters(n) {
   const list = [];
   const count = { blue: 4 + 4 * n, red: n >= 2 ? 4 * n : 0, lizard: n >= 3 ? 2 * n : 0, bat: n >= 4 ? 2 * n : 0 };
-  const extra = Math.max(0, n - state.map.waves.same) * state.map.waves.growth;
-  for (const [kind, k] of Object.entries(count)) for (let i = 0; i < Math.round(k * (1 + extra)); i++) list.push(kind);
+  let factor = 1 + Math.max(0, n - state.map.waves.same) * state.map.waves.growth;
+  const fixed = state.map.waves.total[n];
+  if (fixed) factor *= fixed / Object.values(count).reduce((a, b) => a + b, 0);
+  for (const [kind, k] of Object.entries(count)) for (let i = 0; i < Math.round(k * factor); i++) list.push(kind);
   for (let i = list.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [list[i], list[j]] = [list[j], list[i]];
@@ -132,7 +134,11 @@ function parseLevel(level) {
   if (castle.w * castle.h !== castleCount) return fail('Borgen skal være et rektangel.');
   const w = level.waves || {};
   const num = (v, lo, hi, def) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : def);
-  const waves = { same: num(w.same, 0, 99, CONFIG.wavesPerLevel), growth: num(w.growth, 0, 1, 0), hpGrowth: num(w.hpGrowth, 0, 1, 0) };
+  const total = {};   // runder med et fast antal monstre i alt, fx { 10: 200 }
+  if (w.total && typeof w.total === 'object') {
+    for (const [k, v] of Object.entries(w.total)) if (Number(k) >= 1 && Number.isFinite(v)) total[Number(k)] = num(v, 1, 1000, 1);
+  }
+  const waves = { same: num(w.same, 0, 99, CONFIG.wavesPerLevel), growth: num(w.growth, 0, 1, 0), hpGrowth: num(w.hpGrowth, 0, 1, 0), total };
   // helten starter i et frit felt op ad borgen, så tæt på banens midte som muligt
   let hero = null, hd = Infinity;
   for (let y = castle.y - 1; y <= castle.y + castle.h; y++) for (let x = castle.x - 1; x <= castle.x + castle.w; x++) {

@@ -4,10 +4,11 @@
 //   S  her kommer monstrene ind (der kan ikke bygges)      C  borgen (et rektangel)
 // waves: runderne er de samme som bane 1 til og med runde 'same'; derefter kommer der
 //        'growth' flere monstre pr. runde (fx 0.06 = 6 procent) og 'hpGrowth' mere liv pr. runde.
+//        'total' giver enkelte runder et fast antal monstre i alt, fx { 10: 200 }.
 // Banerne kan laves i baneeditoren (editor.html) eller ud fra en tegning (tools/png_to_level.py).
 'use strict';
 const LEVELS = [
-  { name: 'Bane 1', waves: { same: 10, growth: 0, hpGrowth: 0 },
+  { name: 'Bane 1', waves: { same: 10, growth: 0, hpGrowth: 0, total: { 10: 200 } },
     map: [
       "S...............................",
       "S...............................",
