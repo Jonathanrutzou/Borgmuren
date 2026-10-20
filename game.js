@@ -1234,9 +1234,27 @@ $('bStart').onclick = () => { startWave(); buildToolbar(); };
 $('bRestart').onclick = () => (state.level ? playLevel(state.level) : startMap(state.map, 0));
 
 // Bundmenuen: bygninger, når byggemenuen er åben, eller panelet for den valgte bygning.
-function buildToolbar() {
+// Bundmenuen glider op og ned med samme bevægelse som menuerne (se #tools i index.html).
+let barEnterTimer = 0;
+function showBar(content) {
+  const bar = $('tools'), entering = !bar.classList.contains('shown');
+  bar.replaceChildren(content);
+  bar.classList.add('shown');
+  bar.inert = false;
+  if (entering) {   // knapperne dukker op én for én, kun når menuen kommer frem
+    bar.classList.add('enter');
+    clearTimeout(barEnterTimer);
+    barEnterTimer = setTimeout(() => bar.classList.remove('enter'), 700);
+  }
+}
+function hideBar() {   // indholdet bliver stående, mens menuen glider væk
   const bar = $('tools');
-  bar.innerHTML = '';
+  bar.classList.remove('shown', 'enter');
+  bar.inert = true;
+}
+
+function buildToolbar() {
+  const bar = document.createDocumentFragment();
   const add = (label, active, onclick, disabled) => {
     const btn = document.createElement('button');
     btn.innerHTML = label;
@@ -1256,7 +1274,7 @@ function buildToolbar() {
       add(`${u.name} ${lv}/${HERO_MAX_LEVEL} <small>${max ? 'fuld' : `${u.text}, ${c} g`}</small>`, false, () => buyHeroUpgrade(k), max || c > state.gold);
     }
     add('Luk', false, () => { state.selected = null; });
-    bar.hidden = false;
+    showBar(bar);
     return;
   }
   const exists = b && (isWall(b) ? state.walls.get(b.key) === b : state.buildings.get(idx(b.x, b.y)) === b);
@@ -1275,16 +1293,16 @@ function buildToolbar() {
     }
     add(`Sælg <small>+${sellValue(b)} g</small>`, false, () => sell(b));
     add('Luk', false, () => { state.selected = null; });
-    bar.hidden = false;
+    showBar(bar);
     return;
   }
   state.selected = null;
-  bar.hidden = !(state.buildOpen && state.phase === 'build');
-  if (bar.hidden) return;
+  if (!(state.buildOpen && state.phase === 'build')) { hideBar(); return; }
   for (const id of TOOLBAR) {
     const d = BUILDINGS[id];
     add(`${d.name} <small>${d.cost} g</small>`, state.tool === id, () => { state.tool = id; });
   }
+  showBar(bar);
 }
 
 // ---------- tegning ----------
