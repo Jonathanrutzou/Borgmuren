@@ -973,7 +973,10 @@ function zoomAt(newZoom, sx, sy) {
   clampCamera();
 }
 
+// Holdes skærmen på højkant, drejes hele spillet 90° (se resize), så det altid vises i landskab.
+let rotated = false;
 function canvasPoint(ev) {
+  if (rotated) return { x: ev.clientY, y: window.innerWidth - ev.clientX };
   const r = canvas.getBoundingClientRect();
   return { x: ev.clientX - r.left, y: ev.clientY - r.top };
 }
@@ -1134,7 +1137,11 @@ function buildToolbar() {
 
 // ---------- tegning ----------
 function resize() {
-  const app = $('app');
+  const app = $('app'), w = window.innerWidth, h = window.innerHeight;
+  rotated = h > w;
+  document.documentElement.classList.toggle('portrait', rotated);
+  app.style.width = rotated ? h + 'px' : '';
+  app.style.height = rotated ? w + 'px' : '';
   viewW = app.clientWidth; viewH = app.clientHeight;
   baseTile = Math.max(8, Math.min(viewW / COLS, viewH / ROWS));
   tile = baseTile * zoom;
