@@ -899,12 +899,11 @@ function updateMonster(m, dt) {
   // monstrene prøver at smadre tårne, de kan nå
   // (søges kun et par gange i sekundet, for rækkevidden er lang)
   m.towerTimer = (m.towerTimer || 0) - dt;
-  if (m.towerTimer <= 0 || (m.tower && !stillThere(m.tower))) {
-    const found = towerTarget(m);
-    m.tower = found && found.b; m.towerTimer = 0.3;
+  if (m.towerTimer <= 0 || (m.tower && !stillThere(m.tower.b))) {
+    m.tower = towerTarget(m); m.towerTimer = 0.3;
   }
   if (m.tower) {
-    const t = { b: m.tower, p: towerSpot(m, m.tower) };
+    const t = m.tower;
     if (moveToward(m, t.p.x, t.p.y, s.speed * dt)) smash(m, t.b);
     m.repath = 0;
     return;
@@ -941,17 +940,27 @@ function smash(m, o) {
   }
 }
 
-// Stedet lige foran tårnet b, set fra monsteret m.
-const towerSpot = (m, b) => ({ x: Math.min(Math.max(m.x, b.x - 0.3), b.x + 1.3), y: Math.min(Math.max(m.y, b.y - 0.3), b.y + 1.3) });
+// Steder, hvorfra et monster kan slå tårnet b: lige foran en af dets fire sider, i et frit
+// nabofelt og uden mur, hegn eller port imellem (monstrene slår ikke gennem mure).
+function towerSpots(b) {
+  const out = [];
+  for (const [dx, dy] of DIRS4) {
+    const nx = b.x + dx, ny = b.y + dy;
+    if (!inBounds(nx, ny) || isCastle(nx, ny) || isBlocking(nx, ny) || wallBetween(b.x, b.y, nx, ny)) continue;
+    out.push({ x: b.x + 0.5 + dx * 0.8, y: b.y + 0.5 + dy * 0.8 });
+  }
+  return out;
+}
 
 // Det nærmeste tårn, monsteret kan gå hen til i lige linje, og stedet foran det.
 function towerTarget(m) {
   let best = null, bd = CONFIG.towerThreatRange;
   for (const b of state.buildings.values()) {
     if (!dataOf(b).tower) continue;
-    const p = towerSpot(m, b);
-    const d = dist(m, p);
-    if (d <= bd && losClear(m, p, moverOf(m))) { bd = d; best = { b, p }; }
+    for (const p of towerSpots(b)) {
+      const d = dist(m, p);
+      if (d <= bd && losClear(m, p, moverOf(m))) { bd = d; best = { b, p }; }
+    }
   }
   return best;
 }
