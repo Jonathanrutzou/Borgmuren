@@ -6,6 +6,12 @@ Ingen grafik endnu, kun firkanter, streger og cirkler.
 Spil den publicerede web-version: https://claude.ai/artifact/QGt4DxtPdg4iafoo9Z7Hfi (eller åbn `index.html` i en browser).
 `python3 build_artifact.py <fil>` samler spillet til én fil til web-versionen.
 
+## Baner
+Banerne står i `levels.js` som kort med ét tegn pr. felt (`.` græs, `~` vand, `#` sten, `S` monstrenes indgang, `C` borgen) og kan have alle størrelser fra 8×6 til 80×60. Der er tre måder at lave en bane på:
+- **Baneeditoren:** `python3 build_artifact.py editor.html --editor` laver en side, hvor man maler banen, prøver den med det samme og kopierer den til `levels.js`. Den kan også læse en tegning.
+- **Tegning (fx Procreate):** `python3 tools/make_template.py 36 20 skabelon.png` laver en skabelon med 32 px pr. felt. Mal felterne hvide (græs), blå (vand), grå (sten), røde (indgang) og brune (borg), og kør `python3 tools/png_to_level.py tegning.png [bredde højde] [navn]`.
+- **I hånden:** ret kortet i `levels.js`.
+
 ## Sådan spilles
 - **Menuer:** Spillet starter med START. Et tryk ruller ned til baneoversigten. Øverst er banerne med 0-3 stjerner (træk sidelæns for at se flere), og nederst er opgraderinger, der skal købes for stjerner (endnu kun pladsholdere). Tryk på en bane, så ruller den ned til spillet. Knappen "Baner" går tilbage til oversigten. Er banen i gang, kan man vælge mellem at fortsætte og at starte forfra.
 - **Bue:** Buen købes for 2 stjerner i baneoversigten. Derefter skifter knappen Sværd/Bue i spillet heltens våben. Med buen skyder helten 4 felter (også flagermus), men holder ingen monstre fast.
