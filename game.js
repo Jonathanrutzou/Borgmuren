@@ -2,15 +2,13 @@
 // Bygninger, helt og monstre bruger tallene fra Borgspillet (content/*.tres).
 'use strict';
 
-const COLS = 32, ROWS = 24;          // iPad 4:3 landscape
+let COLS = 32, ROWS = 24;            // banens størrelse; sættes af banen (bane 1: iPad 4:3 landscape)
 
 // ---------- data (fra Borgspillet) ----------
 const CONFIG = {
   startGold: 180,
   castleLives: 20,
   wavesPerLevel: 10,       // bane 1 består af 10 runder
-  castle: { x: 29, y: 9, w: 3, h: 6 },
-  heroSpawn: { x: 27.5, y: 12 },
   // knight.tres (farten er fordoblet)
   // bow i knight.tres: -3 skade, rækker 4 felter, 10 % hurtigere, rammer flagermus, holder ingen fast
   bow: { damageBonus: -3, range: 4.0, intervalFactor: 0.9 },
@@ -76,11 +74,12 @@ const SOLDIER_ENGAGE = 0.9;   // soldaterne holder monstre inden for dette
 const SOLDIER_GUARD = 2.0;    // og går ud efter monstre så langt fra deres post
 const SOLDIER_SPEED = 1.5;
 
-// Hvilke væsner der kommer i bølge n (1, 2, 3 ...).
+// Hvilke væsner der kommer i bølge n (1, 2, 3 ...). Banens 'waves' gør senere runder sværere.
 function waveMonsters(n) {
   const list = [];
   const count = { blue: 4 + 4 * n, red: n >= 2 ? 4 * n : 0, lizard: n >= 3 ? 2 * n : 0, bat: n >= 4 ? 2 * n : 0 };
-  for (const [kind, k] of Object.entries(count)) for (let i = 0; i < k; i++) list.push(kind);
+  const extra = Math.max(0, n - state.map.waves.same) * state.map.waves.growth;
+  for (const [kind, k] of Object.entries(count)) for (let i = 0; i < Math.round(k * (1 + extra)); i++) list.push(kind);
   for (let i = list.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [list[i], list[j]] = [list[j], list[i]];
@@ -99,9 +98,59 @@ const physical = (raw, armor) => Math.max(raw - Math.max(armor, 0), 1);
 const center = (x, y) => ({ x: x + 0.5, y: y + 0.5 });
 
 function isCastle(x, y) {
-  const c = CONFIG.castle;
+  const c = state.map.castle;
   return x >= c.x && x < c.x + c.w && y >= c.y && y < c.y + c.h;
 }
+
+// ---------- baner ----------
+const T_GRASS = 0, T_WATER = 1, T_ROCK = 2, T_SPAWN = 3;
+const TERRAIN_CHARS = { '.': T_GRASS, '~': T_WATER, '#': T_ROCK, 'S': T_SPAWN, 'C': T_GRASS };
+
+// Læser en bane (fra levels.js eller baneeditoren). Kort fra editoren er utroværdige, så alt
+// tjekkes; giver null og en forklaring, hvis banen ikke kan bruges.
+function parseLevel(level) {
+  const fail = why => ({ error: why });
+  if (!level || !Array.isArray(level.map) || !level.map.length) return fail('Banen har intet kort.');
+  const rows = level.map.length, cols = String(level.map[0]).length;
+  if (cols < 8 || rows < 6 || cols > 80 || rows > 60) return fail('Banen skal være mellem 8×6 og 80×60 felter.');
+  const terrain = new Uint8Array(cols * rows), spawns = [];
+  let cx0 = Infinity, cy0 = Infinity, cx1 = -1, cy1 = -1, castleCount = 0;
+  for (let y = 0; y < rows; y++) {
+    const line = String(level.map[y]);
+    if (line.length !== cols) return fail(`Række ${y + 1} har en anden længde end de andre.`);
+    for (let x = 0; x < cols; x++) {
+      const ch = line[x];
+      if (!(ch in TERRAIN_CHARS)) return fail(`Ukendt tegn "${ch}" i række ${y + 1}.`);
+      terrain[y * cols + x] = TERRAIN_CHARS[ch];
+      if (ch === 'S') spawns.push({ x, y });
+      if (ch === 'C') { castleCount++; cx0 = Math.min(cx0, x); cy0 = Math.min(cy0, y); cx1 = Math.max(cx1, x); cy1 = Math.max(cy1, y); }
+    }
+  }
+  if (!spawns.length) return fail('Banen mangler felter, hvor monstrene kommer ind (S).');
+  if (!castleCount) return fail('Banen mangler en borg (C).');
+  const castle = { x: cx0, y: cy0, w: cx1 - cx0 + 1, h: cy1 - cy0 + 1 };
+  if (castle.w * castle.h !== castleCount) return fail('Borgen skal være et rektangel.');
+  const w = level.waves || {};
+  const num = (v, lo, hi, def) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : def);
+  const waves = { same: num(w.same, 0, 99, CONFIG.wavesPerLevel), growth: num(w.growth, 0, 1, 0), hpGrowth: num(w.hpGrowth, 0, 1, 0) };
+  // helten starter i et frit felt op ad borgen, så tæt på banens midte som muligt
+  let hero = null, hd = Infinity;
+  for (let y = castle.y - 1; y <= castle.y + castle.h; y++) for (let x = castle.x - 1; x <= castle.x + castle.w; x++) {
+    if (x < 0 || y < 0 || x >= cols || y >= rows) continue;
+    if (x >= castle.x && x < castle.x + castle.w && y >= castle.y && y < castle.y + castle.h) continue;
+    if (terrain[y * cols + x] !== T_GRASS) continue;
+    const d = Math.hypot(x + 0.5 - cols / 2, y + 0.5 - rows / 2);
+    if (d < hd) { hd = d; hero = { x: x + 0.5, y: y + 0.5 }; }
+  }
+  if (!hero) return fail('Der er ingen fri plads til helten ved borgen.');
+  return { name: String(level.name || 'Bane'), cols, rows, terrain, spawns, castle, heroSpawn: hero, waves };
+}
+
+const terrainAt = (x, y) => state.map.terrain[idx(x, y)];
+const isObstacle = (x, y) => { const t = terrainAt(x, y); return t === T_WATER || t === T_ROCK; };
+const isSpawn = (x, y) => terrainAt(x, y) === T_SPAWN;
+// Kan ingen gå her (spærrende bygning, vand eller sten)?
+const isSolid = (x, y) => isBlocking(x, y) || isObstacle(x, y);
 
 // Lille binær hob til Dijkstra: elementer er [afstand, celleindeks].
 function heapPush(h, item) {
@@ -131,8 +180,10 @@ function heapPop(h) {
 
 let state;
 
-function newGame() {
+function newGame(map = parseLevel(LEVELS[0])) {
+  COLS = map.cols; ROWS = map.rows;
   state = {
+    map,
     buildings: new Map(),   // celleindeks -> bygning i et felt
     walls: new Map(),       // kant-nøgle -> mur/port på stregen mellem to felter
     phase: 'build',         // 'build' | 'wave' | 'over' | 'won'
@@ -179,7 +230,7 @@ function buyHeroUpgrade(k) {
 }
 
 function newHero() {
-  const s = CONFIG.heroSpawn;
+  const s = state.map.heroSpawn;
   return { x: s.x, y: s.y, hp: heroMax(), alive: true, cooldown: 0, path: [], opponent: null };
 }
 
@@ -193,7 +244,7 @@ function isBlocking(x, y) {
 
 // Hvor helt og soldater må stå: ikke i borgen eller i spærrende bygninger.
 function walkableCell(x, y) {
-  return inBounds(x, y) && !isCastle(x, y) && !isBlocking(x, y);
+  return inBounds(x, y) && !isCastle(x, y) && !isSolid(x, y);
 }
 
 function slowFactor(x, y) {
@@ -249,7 +300,7 @@ const isMonster = who => who === 'monster' || who === 'climber';
 const moverOf = m => (m.s.move === 'climb' ? 'climber' : 'monster');
 
 function cellCost(x, y, who) {
-  if (!inBounds(x, y)) return Infinity;
+  if (!inBounds(x, y) || isObstacle(x, y)) return Infinity;
   if (isCastle(x, y)) return isWalker(who) ? Infinity : 1;
   const b = buildingAt(x, y);
   if (!b) return 1;
@@ -281,7 +332,7 @@ function stepCost(ax, ay, dx, dy, who) {
   // På skrå: ingen bygning i målfeltet, hjørnefelterne skal være frie og ingen mure eller porte om hjørnet.
   if (isBlocking(bx, by)) return Infinity;
   for (const [mx, my] of [[bx, ay], [ax, by]]) {
-    if (!inBounds(mx, my) || isBlocking(mx, my)) return Infinity;
+    if (!inBounds(mx, my) || isSolid(mx, my)) return Infinity;
     if (isCastle(mx, my) && isWalker(who)) return Infinity;
     if (wallBetween(ax, ay, mx, my) || wallBetween(mx, my, bx, by)) return Infinity;
   }
@@ -330,10 +381,11 @@ function nextStep(cx, cy, who = 'monster') {
   return best;
 }
 
-// Monstrenes vej fra midten af venstre kant, vist som prikker i byggefasen.
+// Monstrenes vej fra det midterste indgangsfelt, vist som prikker i byggefasen.
 function previewRoute() {
   const route = [];
-  let x = 0, y = ROWS >> 1;
+  const sp = state.map.spawns[state.map.spawns.length >> 1];
+  let x = sp.x, y = sp.y;
   for (let guard = 0; guard < COLS * ROWS && !isCastle(x, y); guard++) {
     route.push(center(x, y));
     const n = nextStep(x, y);
@@ -343,11 +395,11 @@ function previewRoute() {
   return route;
 }
 
-// Er der en åben vej (uden om mure og bygninger, gennem porte) fra venstre kant til borgen?
+// Er der en åben vej (uden om mure og bygninger, gennem porte) fra monstrenes indgang til borgen?
 function hasOpening() {
   const seen = new Uint8Array(COLS * ROWS);
   const q = [];
-  for (let y = 0; y < ROWS; y++) if (!isBlocking(0, y)) { seen[idx(0, y)] = 1; q.push([0, y]); }
+  for (const { x, y } of state.map.spawns) if (!isBlocking(x, y)) { seen[idx(x, y)] = 1; q.push([x, y]); }
   for (let h = 0; h < q.length; h++) {
     const [x, y] = q[h];
     for (const [dx, dy] of DIRS4) {
@@ -365,12 +417,12 @@ function hasOpening() {
 function buildingsReachable() {
   const seen = new Uint8Array(COLS * ROWS);
   const q = [];
-  for (let y = 0; y < ROWS; y++) { seen[idx(0, y)] = 1; q.push([0, y]); }
+  for (const { x, y } of state.map.spawns) { seen[idx(x, y)] = 1; q.push([x, y]); }
   for (let h = 0; h < q.length; h++) {
     const [x, y] = q[h];
     for (const [dx, dy] of DIRS4) {
       const nx = x + dx, ny = y + dy;
-      if (!inBounds(nx, ny) || seen[idx(nx, ny)] || isCastle(nx, ny)) continue;
+      if (!inBounds(nx, ny) || seen[idx(nx, ny)] || isCastle(nx, ny) || isObstacle(nx, ny)) continue;
       const w = wallBetween(x, y, nx, ny);
       if (w && !dataOf(w).gate) continue;
       seen[idx(nx, ny)] = 1; q.push([nx, ny]);
@@ -413,10 +465,10 @@ function segClear(x0, y0, x1, y1, who) {
   for (let s = 1; s <= steps; s++) {
     const nx = Math.floor(x0 + (x1 - x0) * s / steps), ny = Math.floor(y0 + (y1 - y0) * s / steps);
     if (nx === cx && ny === cy) continue;
-    if (!inBounds(nx, ny) || isBlocking(nx, ny)) return false;
+    if (!inBounds(nx, ny) || isSolid(nx, ny)) return false;
     if (isCastle(nx, ny) && isWalker(who)) return false;
     if (nx !== cx && ny !== cy) {   // gennem et hjørne
-      if (isBlocking(nx, cy) || isBlocking(cx, ny)) return false;
+      if (isSolid(nx, cy) || isSolid(cx, ny)) return false;
       if (!edgePassable(cx, cy, nx, cy, who) || !edgePassable(nx, cy, nx, ny, who) ||
           !edgePassable(cx, cy, cx, ny, who) || !edgePassable(cx, ny, nx, ny, who)) return false;
     } else if (!edgePassable(cx, cy, nx, ny, who)) return false;
@@ -508,7 +560,8 @@ function placeEdge(id, key) {
 function placeCell(id, x, y) {
   const d = BUILDINGS[id];
   if (!inBounds(x, y) || isCastle(x, y) || buildingAt(x, y)) return false;
-  if (x === 0) { say('Monstrene kommer ind i venstre side. Der kan ikke bygges.'); return false; }
+  if (isSpawn(x, y)) { say('Her kommer monstrene ind. Der kan ikke bygges.'); return false; }
+  if (isObstacle(x, y)) { say(terrainAt(x, y) === T_WATER ? 'Der kan ikke bygges på vand.' : 'Der kan ikke bygges på sten.'); return false; }
   if (state.gold < d.cost) { say('Ikke nok guld.'); return false; }
   const h = state.hero;
   if (d.blocks && Math.floor(h.x) === x && Math.floor(h.y) === y) { say('Helten står der.'); return false; }
@@ -660,9 +713,13 @@ function endWave() {
 
 function spawnMonster(kind) {
   const s = MONSTERS[kind];
-  const y = Math.floor(Math.random() * ROWS);
-  const hp = Math.round(s.hp * (1 + CONFIG.monsterHpGrowth * (state.wave - 1)));
-  state.monsters.push({ kind, s, x: 0.5, y: y + 0.5, hp, maxHp: hp, cooldown: 0,
+  // kun fra indgangsfelter, hvorfra der er vej til borgen (et felt kan være hegnet inde)
+  const open = state.map.spawns.filter(p => state.fields.monster[idx(p.x, p.y)] < Infinity);
+  const list = open.length ? open : state.map.spawns;
+  const sp = list[Math.floor(Math.random() * list.length)];
+  const w = state.map.waves, extra = Math.max(0, state.wave - w.same) * w.hpGrowth;
+  const hp = Math.round(s.hp * (1 + CONFIG.monsterHpGrowth * (state.wave - 1) + extra));
+  state.monsters.push({ kind, s, x: sp.x + 0.5, y: sp.y + 0.5, hp, maxHp: hp, cooldown: 0,
                         wp: null, repath: 0, heldBy: null });
 }
 
@@ -875,7 +932,7 @@ function updateMonster(m, dt) {
   const h = state.hero;
 
   if (s.move === 'fly') {   // flagermus flyver lige mod borgen hen over alt
-    const c = CONFIG.castle;
+    const c = state.map.castle;
     const tx = Math.min(Math.max(m.x, c.x), c.x + c.w), ty = Math.min(Math.max(m.y, c.y), c.y + c.h);
     moveToward(m, tx, ty, s.speed * dt);
     if (isCastle(Math.floor(m.x), Math.floor(m.y))) { state.lives -= s.castleDamage; m.done = true; }
@@ -1121,7 +1178,7 @@ $('bBuild').onclick = () => {
 $('bSpeed').onclick = () => { state.speed = { 1: 2, 2: 5, 5: 1 }[state.speed]; };
 $('bWeapon').onclick = () => { state.weapon = state.weapon === 'bow' ? 'sword' : 'bow'; };
 $('bStart').onclick = () => { startWave(); buildToolbar(); };
-$('bRestart').onclick = () => playLevel(state.level);
+$('bRestart').onclick = () => (state.level ? playLevel(state.level) : startMap(state.map, 0));
 
 // Bundmenuen: bygninger, når byggemenuen er åben, eller panelet for den valgte bygning.
 function buildToolbar() {
@@ -1239,11 +1296,28 @@ function draw() {
   ctx.clearRect(0, 0, viewW, viewH);
   ctx.setTransform(dpr, 0, 0, dpr, -camX * dpr, -camY * dpr);
 
-  // bane og spawn-zone til venstre
+  // bane, indgangsfelter (røde), vand og sten
   ctx.fillStyle = '#e7e2d4';
   ctx.fillRect(0, 0, COLS * tile, ROWS * tile);
-  ctx.fillStyle = 'rgba(239,68,68,0.12)';
-  ctx.fillRect(0, 0, tile, ROWS * tile);
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    const t = terrainAt(x, y);
+    if (t === T_GRASS) continue;
+    ctx.fillStyle = t === T_SPAWN ? 'rgba(239,68,68,0.14)' : t === T_WATER ? '#a9c9d6' : '#a39d92';
+    ctx.fillRect(x * tile, y * tile, tile + 0.5, tile + 0.5);
+    if (t === T_WATER) {   // små bølger
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = Math.max(1, tile * 0.05);
+      ctx.beginPath();
+      for (const fy of [0.35, 0.7]) {
+        ctx.moveTo((x + 0.2) * tile, (y + fy) * tile);
+        ctx.quadraticCurveTo((x + 0.35) * tile, (y + fy - 0.1) * tile, (x + 0.5) * tile, (y + fy) * tile);
+        ctx.quadraticCurveTo((x + 0.65) * tile, (y + fy + 0.1) * tile, (x + 0.8) * tile, (y + fy) * tile);
+      }
+      ctx.stroke();
+    } else if (t === T_ROCK) {   // en sten
+      ctx.fillStyle = '#7d776c';
+      ctx.beginPath(); ctx.ellipse((x + 0.5) * tile, (y + 0.55) * tile, tile * 0.32, tile * 0.24, 0, 0, Math.PI * 2); ctx.fill();
+    }
+  }
 
   // gitter
   ctx.strokeStyle = 'rgba(0,0,0,0.08)'; ctx.lineWidth = 1;
@@ -1310,7 +1384,7 @@ function draw() {
   for (const w of state.walls.values()) drawWall(w, w === sel);
 
   // borg
-  const c = CONFIG.castle;
+  const c = state.map.castle;
   ctx.fillStyle = '#7c5a3a';
   ctx.fillRect(c.x * tile, c.y * tile, c.w * tile, c.h * tile);
   if (state.selected === 'castle') { ctx.strokeStyle = '#facc15'; ctx.lineWidth = 3; ctx.strokeRect(c.x * tile, c.y * tile, c.w * tile, c.h * tile); }
@@ -1359,7 +1433,7 @@ function draw() {
     circle(h.x, h.y, 0.4, '#16a34a', '#052e16');
     hpBar(h.x, h.y, h.hp / heroMax(), 0.65);
   } else {
-    const s = CONFIG.heroSpawn;
+    const s = state.map.heroSpawn;
     circle(s.x, s.y, 0.4, null, '#dc2626');
     text(`${Math.ceil(h.respawn)}`, s.x * tile, s.y * tile, tile * 0.45, '#dc2626');
   }
@@ -1396,14 +1470,14 @@ function drawHud() {
   const over = state.phase === 'over' || state.phase === 'won';
   $('overlay').hidden = !over;
   if (over) $('overlayText').textContent = state.phase === 'won'
-    ? `Bane ${state.level} klaret! ${'★'.repeat(starsFor(state.lives))}${'☆'.repeat(3 - starsFor(state.lives))} (borgen har ${state.lives} liv tilbage)`
+    ? `${state.map.name} klaret! ${'★'.repeat(starsFor(state.lives))}${'☆'.repeat(3 - starsFor(state.lives))} (borgen har ${state.lives} liv tilbage)`
     : `Borgen faldt i runde ${state.wave}`;
 }
 
 // ---------- menuer: start, baneoversigt og spil ----------
 // De tre skærme ligger under hinanden; der rulles mellem dem med parallakse (baggrunden flytter sig langsommere).
-const LEVEL_COUNT = 12;      // vises i oversigten; kun bane 1 findes indtil videre
-const PLAYABLE_LEVELS = 1;
+const LEVEL_COUNT = 12;      // vises i oversigten; banerne står i levels.js
+const PLAYABLE_LEVELS = LEVELS.length;
 const SHOP = [               // permanente opgraderinger, der købes for stjerner (dem uden id er pladsholdere)
   { id: 'bow', name: 'Bue til helten', price: 2 },
   { name: 'Nyt våben: Spyd', price: 3 },
@@ -1514,9 +1588,23 @@ function chooseLevel(n) {
 }
 
 function playLevel(n) {
-  newGame();
+  startMap(parseLevel(LEVELS[n - 1]), n);
+}
+
+// Spiller en bane, der ikke står i levels.js (fra baneeditoren). Giver en fejltekst, hvis den ikke kan bruges.
+function playCustom(level) {
+  const map = parseLevel(level);
+  if (map.error) return map.error;
+  startMap(map, 0);
+  if (!hasOpening()) return 'Der er ingen vej fra monstrenes indgang (S) til borgen (C).';
+  return null;
+}
+
+function startMap(map, n) {
+  newGame(map);
   state.level = n;
-  zoom = 1; tile = baseTile; camX = 0; camY = 0; clampCamera();
+  zoom = 1; camX = 0; camY = 0;
+  resize();
   buildToolbar();
   showStage(2);
 }
@@ -1572,7 +1660,7 @@ function frame(now) {
   if (stage === 2) for (let k = 0; k < state.speed; k++) update(dt);   // spillet står stille i menuerne
   if (state.phase !== lastPhase) {
     lastPhase = state.phase;
-    if (state.phase === 'won') {
+    if (state.phase === 'won' && state.level) {
       progress.stars[state.level] = Math.max(progress.stars[state.level] || 0, starsFor(state.lives));
       saveProgress();
     }
@@ -1588,4 +1676,4 @@ resize();
 showStage(0, true);
 requestAnimationFrame(frame);
 window.borgmuren = { get state() { return state; }, update, startWave, placeCell, placeEdge, moveHero, tap,
-                     recomputeField, hasOpening, setRally, showStage, playLevel, smash, CONFIG, BUILDINGS, hKey, vKey };
+                     recomputeField, hasOpening, setRally, showStage, playLevel, playCustom, parseLevel, smash, LEVELS, CONFIG, BUILDINGS, hKey, vKey };

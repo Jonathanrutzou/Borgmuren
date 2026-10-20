@@ -6,10 +6,11 @@ import re
 import sys
 
 html = open('index.html', encoding='utf-8').read()
-game = open('game.js', encoding='utf-8').read()
 style = re.search(r'<style>.*?</style>', html, re.S).group(0)
 links = '\n'.join(re.findall(r'<link [^>]*>', html))
 body = re.search(r'<body>(.*?)</body>', html, re.S).group(1)
-body = body.replace('<script src="game.js"></script>', '<script>\n' + game + '\n</script>')
+# hvert <script src="..."> erstattes af filens indhold
+body = re.sub(r'<script src="([^"]+)"></script>',
+              lambda m: '<script>\n' + open(m.group(1), encoding='utf-8').read() + '\n</script>', body)
 page = '<title>Borgmuren</title>\n<meta name="claude:viewport-fit-sides" content="cover">\n' + links + '\n' + style + '\n' + body
 open(sys.argv[1], 'w', encoding='utf-8').write(page)
