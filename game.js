@@ -948,18 +948,23 @@ const $ = id => document.getElementById(id);
 // Kamera: tile er feltets størrelse i skærmpixels (baseTile * zoom); camX/camY er,
 // hvor langt banen er rullet. Lærredet fylder hele skærmen.
 const MAX_ZOOM = 3;
+const MIN_ZOOM = 0.8;         // lidt under 1, så hele banen kan ses fri af knapperne
+const OVERSCROLL = 90;        // så mange pixels må banen rulles forbi kanten, så kanterne kan ses under knapperne
 const TAP_SLOP = 10;          // så mange pixels må fingeren flytte sig, før det er en panorering
 let baseTile = 20, zoom = 1, tile = 20, camX = 0, camY = 0, viewW = 0, viewH = 0;
 
+function clampAxis(cam, board, view) {
+  const lo = Math.min(-OVERSCROLL, -(view - board) / 2), hi = Math.max(board - view + OVERSCROLL, -(view - board) / 2);
+  return Math.min(Math.max(cam, lo), hi);
+}
 function clampCamera() {
-  const bw = COLS * tile, bh = ROWS * tile;
-  camX = bw <= viewW ? -(viewW - bw) / 2 : Math.min(Math.max(camX, 0), bw - viewW);
-  camY = bh <= viewH ? -(viewH - bh) / 2 : Math.min(Math.max(camY, 0), bh - viewH);
+  camX = clampAxis(camX, COLS * tile, viewW);
+  camY = clampAxis(camY, ROWS * tile, viewH);
 }
 
 // Zoomer, så punktet (sx, sy) på skærmen bliver stående samme sted.
 function zoomAt(newZoom, sx, sy) {
-  newZoom = Math.min(Math.max(newZoom, 1), MAX_ZOOM);
+  newZoom = Math.min(Math.max(newZoom, MIN_ZOOM), MAX_ZOOM);
   const wx = (sx + camX) / tile, wy = (sy + camY) / tile;
   zoom = newZoom;
   tile = baseTile * zoom;
