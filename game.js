@@ -17,7 +17,6 @@ const CONFIG = {
   soldierRespawnSec: 10,   // døde soldater kommer tilbage én ad gangen
   soldierRegenPerSec: 0.002,   // soldater heler 0,2 % af deres liv pr. sekund
   buildingHp: 100,         // liv for bygninger; monstrene kan smadre dem og porte, men ikke mure
-  towerThreatRange: 10,    // monstre går efter tårne, de kan nå i lige linje inden for så mange felter
   climbCost: 3,            // ekstra vejpris for at kravle over et hegn
   climbSpeed: 0.35,        // øglen kravler med 35 % af sin fart
   sellRatio: 0.6,          // ældre bygninger sælges for 60 %; nye i samme byggefase for fuld pris
@@ -346,17 +345,31 @@ function stepCost(ax, ay, dx, dy, who) {
 }
 
 // Afstandsfelter til borgen for gående og kravlende monstre (Dijkstra med 8 retninger).
+// Monstrene går først efter tårne, så efter gårde og til sidst efter borgen, uanset afstand.
+// Derfor er der et afstandsfelt til hvert slags mål (pr. bevægelsestype).
 function recomputeField() {
   state.fields = { monster: buildField('monster'), climber: buildField('climber') };
+  const towers = [], farms = [];
+  for (const b of state.buildings.values()) {
+    if (dataOf(b).tower) towers.push(b); else if (dataOf(b).income) farms.push(b);
+  }
+  const seeds = list => list.flatMap(b => attackSpots(b).map(p => idx(p.cx, p.cy)));
+  state.targetFields = {};
+  for (const who of ['monster', 'climber']) {
+    state.targetFields[who] = { tower: towers.length ? buildField(who, seeds(towers)) : null,
+                                farm: farms.length ? buildField(who, seeds(farms)) : null };
+  }
   state.route = previewRoute();
   if (state.monsters) for (const m of state.monsters) m.repath = 0;
 }
 
-function buildField(who) {
+// Afstand til målet for hvert felt. Uden seeds er målet borgen, ellers de givne felter.
+function buildField(who, seeds) {
   const n = COLS * ROWS;
   const field = new Float64Array(n).fill(Infinity);
   const heap = [];
-  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+  if (seeds) for (const i of seeds) { field[i] = 0; heapPush(heap, [0, i]); }
+  else for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
     if (isCastle(x, y)) { field[idx(x, y)] = 0; heapPush(heap, [0, idx(x, y)]); }
   }
   while (heap.length) {
@@ -374,14 +387,13 @@ function buildField(who) {
   return field;
 }
 
-function nextStep(cx, cy, who = 'monster') {
-  const field = state.fields[who];
+function nextStep(cx, cy, who = 'monster', field = state.fields[who]) {
   let best = null, bd = Infinity;
   for (const [dx, dy] of DIRS8) {
     const nx = cx + dx, ny = cy + dy;
     const c = stepCost(cx, cy, dx, dy, who);
     if (c === Infinity) continue;
-    const d = c + (isCastle(nx, ny) ? 0 : field[idx(nx, ny)]);
+    const d = c + field[idx(nx, ny)];
     if (d < bd) { bd = d; best = { x: nx, y: ny, dx, dy }; }
   }
   return best;
@@ -910,9 +922,19 @@ function updateTower(b, dt) {
 function monsterWaypoint(m) {
   const who = moverOf(m);
   let cx = Math.floor(m.x), cy = Math.floor(m.y);
+  // først tårne, så gårde, så borgen – det første mål, der kan nås
+  const tf = state.targetFields[who];
+  let field = state.fields[who], goal = null;
+  for (const kind of ['tower', 'farm']) {
+    if (tf[kind] && tf[kind][idx(cx, cy)] < Infinity) { field = tf[kind]; goal = kind; break; }
+  }
+  if (goal && field[idx(cx, cy)] === 0) {   // fremme: slå bygningen ved siden af
+    const t = targetNextTo(cx, cy, goal);
+    if (t) return { kind: 'attack', at: t.p, obj: t.b };
+  }
   const pts = [];
   for (let k = 0; k < 20; k++) {
-    const n = nextStep(cx, cy, who);
+    const n = nextStep(cx, cy, who, field);
     if (!n) break;
     const wall = (!n.dx || !n.dy) ? wallBetween(cx, cy, n.x, n.y) : null;
     if (wall && !dataOf(wall).gate) {   // et hegn, øglen kravler over
@@ -924,7 +946,7 @@ function monsterWaypoint(m) {
       break;
     }
     pts.push(center(n.x, n.y));
-    if (isCastle(n.x, n.y)) break;
+    if (isCastle(n.x, n.y) || field[idx(n.x, n.y)] === 0) break;
     cx = n.x; cy = n.y;
   }
   if (!pts.length) return null;
@@ -972,19 +994,6 @@ function updateMonster(m, dt) {
     return;
   }
 
-  // monstrene prøver at smadre tårne, de kan nå
-  // (søges kun et par gange i sekundet, for rækkevidden er lang)
-  m.towerTimer = (m.towerTimer || 0) - dt;
-  if (m.towerTimer <= 0 || (m.tower && !stillThere(m.tower.b))) {
-    m.tower = towerTarget(m); m.towerTimer = 0.3;
-  }
-  if (m.tower) {
-    const t = m.tower;
-    if (moveToward(m, t.p.x, t.p.y, s.speed * dt)) smash(m, t.b);
-    m.repath = 0;
-    return;
-  }
-
   m.repath -= dt;
   if (m.repath <= 0 || !m.wp) { m.wp = monsterWaypoint(m); m.repath = 0.25; }
   const wp = m.wp;
@@ -1016,29 +1025,28 @@ function smash(m, o) {
   }
 }
 
-// Steder, hvorfra et monster kan slå tårnet b: lige foran en af dets fire sider, i et frit
-// nabofelt og uden mur, hegn eller port imellem (monstrene slår ikke gennem mure).
-function towerSpots(b) {
+// Felter, hvorfra et monster kan slå bygningen b: et frit nabofelt lige op ad en af dens
+// fire sider uden mur, hegn eller port imellem (monstrene slår ikke gennem mure).
+// p er stedet, monsteret stiller sig.
+function attackSpots(b) {
   const out = [];
   for (const [dx, dy] of DIRS4) {
     const nx = b.x + dx, ny = b.y + dy;
-    if (!inBounds(nx, ny) || isCastle(nx, ny) || isBlocking(nx, ny) || wallBetween(b.x, b.y, nx, ny)) continue;
-    out.push({ x: b.x + 0.5 + dx * 0.8, y: b.y + 0.5 + dy * 0.8 });
+    if (!inBounds(nx, ny) || isCastle(nx, ny) || isSolid(nx, ny) || wallBetween(b.x, b.y, nx, ny)) continue;
+    out.push({ cx: nx, cy: ny, p: { x: b.x + 0.5 + dx * 0.8, y: b.y + 0.5 + dy * 0.8 } });
   }
   return out;
 }
 
-// Det nærmeste tårn, monsteret kan gå hen til i lige linje, og stedet foran det.
-function towerTarget(m) {
-  let best = null, bd = CONFIG.towerThreatRange;
-  for (const b of state.buildings.values()) {
-    if (!dataOf(b).tower) continue;
-    for (const p of towerSpots(b)) {
-      const d = dist(m, p);
-      if (d <= bd && losClear(m, p, moverOf(m))) { bd = d; best = { b, p }; }
-    }
+// Et tårn eller en gård (goal), som monsteret i feltet (cx, cy) kan slå.
+function targetNextTo(cx, cy, goal) {
+  for (const [dx, dy] of DIRS4) {
+    const b = buildingAt(cx - dx, cy - dy);
+    if (!b || !(goal === 'tower' ? dataOf(b).tower : dataOf(b).income)) continue;
+    const spot = attackSpots(b).find(s => s.cx === cx && s.cy === cy);
+    if (spot) return { b, p: spot.p };
   }
-  return best;
+  return null;
 }
 
 // ---------- input ----------
