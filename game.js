@@ -1238,6 +1238,11 @@ function draw() {
   for (let y = 0; y <= ROWS; y++) { ctx.moveTo(0, y * tile + 0.5); ctx.lineTo(COLS * tile, y * tile + 0.5); }
   ctx.stroke();
 
+  // tyk kant rundt om banen, som en mur (uden for felterne)
+  const bw = Math.max(5, tile * 0.3);
+  ctx.strokeStyle = '#6b6457'; ctx.lineWidth = bw; ctx.lineJoin = 'miter';
+  ctx.strokeRect(-bw / 2, -bw / 2, COLS * tile + bw, ROWS * tile + bw);
+
   // monstrenes vej
   if (state.phase === 'build') {
     ctx.fillStyle = 'rgba(220,38,38,0.5)';
@@ -1511,15 +1516,14 @@ $('bCancel').onclick = () => { $('levelDialog').hidden = true; };
 $('bMenu').onclick = () => { state.selected = null; state.rallyFor = null; buildToolbar(); showStage(1); };
 $('bToMenu').onclick = () => showStage(1);
 
-// Pynt i baggrunden: skyer og bakker, der ruller langsommere end forgrunden.
+// Svage vandrette streger i baggrunden under startskærmen; de ruller langsommere end forgrunden,
+// så man kan se parallaksen. Selve startskærmen er ensfarvet.
 (function decorate() {
   const bg = $('menuBg');
-  const blobs = [[10, 6, 22, 7, '#fff'], [62, 12, 28, 8, '#fff'], [35, 22, 18, 6, '#fff'], [80, 30, 20, 6, '#fff'],
-                 [-10, 62, 60, 30, '#86b05f'], [45, 66, 70, 30, '#7aa553'], [15, 82, 50, 25, '#5f8a42'], [70, 86, 50, 25, '#577f3c']];
-  for (const [x, y, w, hh, c] of blobs) {
+  for (let k = 0; k < 9; k++) {
     const d = document.createElement('div');
-    d.className = 'blob';
-    Object.assign(d.style, { left: x + '%', top: y + '%', width: w + '%', height: hh + '%', background: c, opacity: c === '#fff' ? 0.8 : 1 });
+    d.className = 'bgline';
+    d.style.top = (56 + k * 5) + '%';
     bg.appendChild(d);
   }
 })();
