@@ -353,6 +353,33 @@ function hasOpening() {
   return false;
 }
 
+// Kan monstrene nå hen til alle bygninger? Mure og hegn må ikke lukke en bygning helt inde;
+// porte og andre bygninger tæller ikke som lukket, for dem kan monstrene smadre.
+function buildingsReachable() {
+  const seen = new Uint8Array(COLS * ROWS);
+  const q = [];
+  for (let y = 0; y < ROWS; y++) { seen[idx(0, y)] = 1; q.push([0, y]); }
+  for (let h = 0; h < q.length; h++) {
+    const [x, y] = q[h];
+    for (const [dx, dy] of DIRS4) {
+      const nx = x + dx, ny = y + dy;
+      if (!inBounds(nx, ny) || seen[idx(nx, ny)] || isCastle(nx, ny)) continue;
+      const w = wallBetween(x, y, nx, ny);
+      if (w && !dataOf(w).gate) continue;
+      seen[idx(nx, ny)] = 1; q.push([nx, ny]);
+    }
+  }
+  for (const b of state.buildings.values()) if (dataOf(b).blocks && !seen[idx(b.x, b.y)]) return false;
+  return true;
+}
+
+// Fortryder en placering, der bryder reglerne om en åben vej til borgen og til alle bygninger.
+function placementProblem() {
+  if (!hasOpening()) return 'Der skal altid være en åbning til borgen!';
+  if (!buildingsReachable()) return 'Monstrene skal kunne komme hen til alle bygninger!';
+  return null;
+}
+
 // Kan man gå i lige linje fra a til b? Tjekkes for midten og to sidelinjer,
 // så ingen skærer hjørner af mure og bygninger.
 function losClear(a, b, who) {
@@ -460,9 +487,10 @@ function placeEdge(id, key) {
   const w = { id, key, spent: d.cost, fresh: true };
   if (d.gate) w.hp = maxHp(w);
   state.walls.set(key, w);
-  if (!hasOpening()) {
+  const problem = placementProblem();
+  if (problem) {
     state.walls.delete(key);
-    say('Der skal altid være en åbning til borgen!');
+    say(problem);
     return false;
   }
   state.gold -= d.cost;
@@ -479,9 +507,10 @@ function placeCell(id, x, y) {
   if (d.blocks && Math.floor(h.x) === x && Math.floor(h.y) === y) { say('Helten står der.'); return false; }
   const b = { id, x, y, hp: d.hp || CONFIG.buildingHp, spent: d.cost, fresh: true, cooldown: 0 };
   state.buildings.set(idx(x, y), b);
-  if (d.blocks && !hasOpening()) {
+  const problem = d.blocks ? placementProblem() : null;
+  if (problem) {
     state.buildings.delete(idx(x, y));
-    say('Der skal altid være en åbning til borgen!');
+    say(problem);
     return false;
   }
   state.gold -= d.cost;
