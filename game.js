@@ -13,14 +13,15 @@ const CONFIG = {
   heroSpawn: { x: 27.5, y: 12 },
   // knight.tres (farten er fordoblet)
   hero: { hp: 220, damage: 12, armor: 3, attackInterval: 0.8, speed: 3.0,
-          engageRange: 0.8, threatRange: 2.0, respawnSec: 10, regenPerSec: 0.005 },  // 0,5 % liv pr. sekund
+          engageRange: 0.8, threatRange: 3.0, respawnSec: 10, regenPerSec: 0.005 },  // 0,5 % liv pr. sekund
   soldierRespawnSec: 10,   // døde soldater kommer tilbage én ad gangen
   buildingHp: 100,         // liv for bygninger; monstrene kan smadre dem og porte, men ikke mure
-  towerThreatRange: 2.0,   // monstre går efter tårne, de kan nå inden for så mange felter
+  towerThreatRange: 10,    // monstre går efter tårne, de kan nå i lige linje inden for så mange felter
   climbCost: 3,            // ekstra vejpris for at kravle over et hegn
   climbSpeed: 0.35,        // øglen kravler med 35 % af sin fart
   sellRatio: 0.6,          // ældre bygninger sælges for 60 %; nye i samme byggefase for fuld pris
   spawnIntervalSec: 1.2,
+  waveArrivalSec: { 9: 40, 10: 40 },   // runder, hvor alle monstre skal nå at komme på så mange sekunder
   monsterHpGrowth: 0.15,   // +15 % liv pr. bølge
 };
 
@@ -42,13 +43,13 @@ const BUILDINGS = {
   tall_wall:  { name: 'Høj mur', cost: 30, edge: true, width: 0.34, color: '#374151' },
   gate:       { name: 'Port', cost: 25, edge: true, width: 0.24, hp: 150, gate: true, upgradesTo: 'iron_gate', color: '#92400e' },
   iron_gate:  { name: 'Jernport', cost: 55, edge: true, width: 0.3, hp: 300, gate: true, color: '#44403c' },
-  net:        { name: 'Klæbenet', cost: 8, blocks: false, slow: 0.4, color: '#a8a29e', label: 'N' },
+  net:        { name: 'Klæbenet', cost: 15, blocks: false, slow: 0.4, color: '#a8a29e', label: 'N' },
   archer:     { name: 'Bueskyttetårn', cost: 40, blocks: true, tower: { damage: 10, range: 3.0, interval: 0.5 }, upgradesTo: 'archer_2', color: '#15803d', label: 'B' },
-  archer_2:   { name: 'Langbuetårn', cost: 95, blocks: true, tower: { damage: 16, range: 3.4, interval: 0.5 }, tier: 2, color: '#166534', label: 'B' },
-  cannon:     { name: 'Kanontårn', cost: 70, blocks: true, tower: { damage: 18, range: 2.3, interval: 1.8, splash: 0.9, ground: true }, upgradesTo: 'cannon_2', color: '#1f2937', label: 'K' },
-  cannon_2:   { name: 'Stor kanon', cost: 160, blocks: true, tower: { damage: 35, range: 2.6, interval: 1.8, splash: 1.1, ground: true }, tier: 2, color: '#111827', label: 'K' },
-  mage:       { name: 'Magertårn', cost: 130, blocks: true, tower: { damage: 28, range: 50, interval: 3.0, magic: true }, upgradesTo: 'mage_2', color: '#7c3aed', label: 'T' },
-  mage_2:     { name: 'Ærkemagertårn', cost: 240, blocks: true, tower: { damage: 50, range: 50, interval: 2.4, magic: true }, tier: 2, color: '#5b21b6', label: 'T' },
+  archer_2:   { name: 'Langbuetårn', cost: 95, blocks: true, tower: { damage: 16, range: 5, interval: 0.5 }, tier: 2, color: '#166534', label: 'B' },
+  cannon:     { name: 'Kanontårn', cost: 70, blocks: true, tower: { damage: 18, range: 2.3, interval: 1, splash: 0.9, ground: true }, upgradesTo: 'cannon_2', color: '#1f2937', label: 'K' },
+  cannon_2:   { name: 'Stor kanon', cost: 160, blocks: true, tower: { damage: 35, range: 2.6, interval: 1, splash: 1.1, ground: true }, tier: 2, color: '#111827', label: 'K' },
+  mage:       { name: 'Magertårn', cost: 130, blocks: true, tower: { damage: 10, range: 50, interval: 3.0, magic: true }, upgradesTo: 'mage_2', color: '#7c3aed', label: 'T' },
+  mage_2:     { name: 'Ærkemagertårn', cost: 240, blocks: true, tower: { damage: 20, range: 50, interval: 2.4, magic: true }, tier: 2, color: '#5b21b6', label: 'T' },
   barracks:   { name: 'Kaserne', cost: 60, blocks: true, soldiers: { count: 2, hp: 90, damage: 7, armor: 1, interval: 1.0 }, upgradesTo: 'barracks_2', color: '#0e7490', label: 'Ka' },
   barracks_2: { name: 'Stor kaserne', cost: 120, blocks: true, soldiers: { count: 3, hp: 130, damage: 10, armor: 2, interval: 0.9 }, upgradesTo: 'barracks_3', tier: 2, color: '#155e75', label: 'Ka' },
   barracks_3: { name: 'Fæstningskaserne', cost: 210, blocks: true, soldiers: { count: 4, hp: 170, damage: 13, armor: 3, interval: 0.9 }, tier: 3, color: '#164e63', label: 'Ka' },
@@ -57,12 +58,12 @@ const BUILDINGS = {
   farm:       { name: 'Gård', cost: 30, blocks: true, income: 10, color: '#ca8a04', label: 'G' },
 };
 // Heltens opgraderinger, købes i borgen (tryk på borgen), 10 trin i hver.
-// Pris for næste trin = cost + step * trin, du allerede har.
+// Pris for næste trin = cost + step * trin, du allerede har (halv pris siden 20. okt., rundet).
 const HERO_UPGRADES = {
-  attack: { name: 'Angrebshastighed', per: 0.07, cost: 60, step: 30, text: '7 % hurtigere slag' },
-  damage: { name: 'Skade', per: 3, cost: 60, step: 30, text: '+3 skade' },
-  hp:     { name: 'Liv', per: 40, cost: 50, step: 25, text: '+40 liv' },
-  move:   { name: 'Bevægelse', per: 0.2, cost: 60, step: 30, text: '+0,2 felt/sek.' },
+  attack: { name: 'Angrebshastighed', per: 0.07, cost: 30, step: 15, text: '7 % hurtigere slag' },
+  damage: { name: 'Skade', per: 3, cost: 30, step: 15, text: '+3 skade' },
+  hp:     { name: 'Liv', per: 40, cost: 25, step: 12.5, text: '+40 liv' },
+  move:   { name: 'Bevægelse', per: 0.2, cost: 30, step: 15, text: '+0,2 felt/sek.' },
 };
 const HERO_MAX_LEVEL = 10;
 
@@ -160,7 +161,7 @@ const heroMax = () => CONFIG.hero.hp + heroLv('hp') * HERO_UPGRADES.hp.per;
 const heroDamage = () => CONFIG.hero.damage + heroLv('damage') * HERO_UPGRADES.damage.per;
 const heroInterval = () => CONFIG.hero.attackInterval * Math.pow(1 - HERO_UPGRADES.attack.per, heroLv('attack'));
 const heroSpeed = () => CONFIG.hero.speed + heroLv('move') * HERO_UPGRADES.move.per;
-const heroUpgradeCost = k => HERO_UPGRADES[k].cost + HERO_UPGRADES[k].step * heroLv(k);
+const heroUpgradeCost = k => Math.round(HERO_UPGRADES[k].cost + HERO_UPGRADES[k].step * heroLv(k));
 
 function buyHeroUpgrade(k) {
   const c = heroUpgradeCost(k);
@@ -585,6 +586,8 @@ function startWave() {
   state.buildOpen = false;
   state.spawnQueue = waveMonsters(state.wave);
   state.spawnTimer = 0;
+  const arrive = CONFIG.waveArrivalSec[state.wave];
+  state.spawnInterval = arrive ? arrive / state.spawnQueue.length : CONFIG.spawnIntervalSec;
   for (const b of state.buildings.values()) b.fresh = false;
   for (const w of state.walls.values()) w.fresh = false;
   recomputeField();
@@ -630,7 +633,7 @@ function update(dt) {
   state.spawnTimer -= dt;
   if (state.spawnQueue.length && state.spawnTimer <= 0) {
     spawnMonster(state.spawnQueue.shift());
-    state.spawnTimer = CONFIG.spawnIntervalSec;
+    state.spawnTimer = state.spawnInterval;
   }
 
   for (const b of state.buildings.values()) if (dataOf(b).tower) updateTower(b, dt);
@@ -852,8 +855,14 @@ function updateMonster(m, dt) {
   }
 
   // monstrene prøver at smadre tårne, de kan nå
-  const t = towerTarget(m);
-  if (t) {
+  // (søges kun et par gange i sekundet, for rækkevidden er lang)
+  m.towerTimer = (m.towerTimer || 0) - dt;
+  if (m.towerTimer <= 0 || (m.tower && !stillThere(m.tower))) {
+    const found = towerTarget(m);
+    m.tower = found && found.b; m.towerTimer = 0.3;
+  }
+  if (m.tower) {
+    const t = { b: m.tower, p: towerSpot(m, m.tower) };
     if (moveToward(m, t.p.x, t.p.y, s.speed * dt)) smash(m, t.b);
     m.repath = 0;
     return;
@@ -887,12 +896,15 @@ function smash(m, o) {
   if (o.hp <= 0) removeBuilding(o);
 }
 
+// Stedet lige foran tårnet b, set fra monsteret m.
+const towerSpot = (m, b) => ({ x: Math.min(Math.max(m.x, b.x - 0.3), b.x + 1.3), y: Math.min(Math.max(m.y, b.y - 0.3), b.y + 1.3) });
+
 // Det nærmeste tårn, monsteret kan gå hen til i lige linje, og stedet foran det.
 function towerTarget(m) {
   let best = null, bd = CONFIG.towerThreatRange;
   for (const b of state.buildings.values()) {
     if (!dataOf(b).tower) continue;
-    const p = { x: Math.min(Math.max(m.x, b.x - 0.3), b.x + 1.3), y: Math.min(Math.max(m.y, b.y - 0.3), b.y + 1.3) };
+    const p = towerSpot(m, b);
     const d = dist(m, p);
     if (d <= bd && losClear(m, p, moverOf(m))) { bd = d; best = { b, p }; }
   }
