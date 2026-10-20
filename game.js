@@ -12,6 +12,9 @@ const CONFIG = {
   // knight.tres (farten er fordoblet)
   // bow i knight.tres: -3 skade, rækker 4 felter, 10 % hurtigere, rammer flagermus, holder ingen fast
   bow: { damageBonus: -3, range: 4.0, intervalFactor: 0.9 },
+  // magikeren købes i et magertårn: angriber altid monsteret nærmest tårnet, går lige så hurtigt
+  // som helten, rækker 6 felter, slår hurtigt med område-skade (magi, også flagermus), men svagt
+  wizard: { cost: 80, damage: 5, interval: 0.5, range: 6, splash: 0.8 },
   hero: { hp: 220, damage: 12, armor: 3, attackInterval: 0.8, speed: 3.0,
           engageRange: 0.8, threatRange: 3.0, respawnSec: 10, regenPerSec: 0.005 },  // 0,5 % liv pr. sekund
   soldierRespawnSec: 10,   // døde soldater kommer tilbage én ad gangen
@@ -201,6 +204,7 @@ function newGame(map = parseLevel(LEVELS[0])) {
     weapon: 'sword',        // 'sword' | 'bow' (buen købes for stjerner)
     monsters: [],
     soldiers: [],
+    wizards: [],            // magikere fra magertårne
     destroyed: [],          // bygninger smadret i denne bølge; de kommer tilbage efter bølgen
     shots: [],
     spawnQueue: [],
@@ -612,6 +616,7 @@ function removeBuilding(b) {
   else {
     state.buildings.delete(idx(b.x, b.y));
     state.soldiers = state.soldiers.filter(s => s.b !== b);
+    state.wizards = state.wizards.filter(w => w.b !== b);
   }
   if (state.selected === b) state.selected = null;
   if (state.rallyFor === b) state.rallyFor = null;
@@ -711,6 +716,7 @@ function endWave() {
     b.hp = maxHp(b);
     state.buildings.set(idx(b.x, b.y), b);
     if (dataOf(b).soldiers) makeSoldiers(b);
+    if (b.wizard) addWizard(b);
   }
   state.destroyed = [];
   recomputeField();
@@ -747,6 +753,7 @@ function update(dt) {
   if (state.phase === 'over' || state.phase === 'won') return;
   updateHero(dt);
   for (const s of state.soldiers) updateSoldier(s, dt);
+  for (const w of state.wizards) updateWizard(w, dt);
   if (state.phase !== 'wave') return;
 
   state.spawnTimer -= dt;
@@ -883,6 +890,38 @@ function updateSoldier(s, dt) {
   if (!s.path.length && !s.idle) { s.path = findPath(s, s.post); s.idle = !s.path.length; }
   followPath(s, SOLDIER_SPEED, dt);
   if (!s.path.length) s.idle = true;
+}
+
+// ---------- magiker ----------
+function buyWizard(b) {
+  const c = CONFIG.wizard.cost;
+  if (b.wizard || !dataOf(b).tower || !dataOf(b).tower.magic || c > state.gold) return;
+  state.gold -= c; b.spent += c; b.wizard = true;
+  addWizard(b);
+}
+function addWizard(b) {
+  const p = defaultRally(b);
+  state.wizards.push({ b, x: p.x, y: p.y, cooldown: 0, path: [], repath: 0 });
+}
+
+function updateWizard(w, dt) {
+  const cfg = CONFIG.wizard;
+  w.cooldown = Math.max(0, w.cooldown - dt);
+  w.repath -= dt;
+  // målet er altid monsteret nærmest tårnet
+  const target = state.phase === 'wave' ? nearestMonster(center(w.b.x, w.b.y), Infinity) : null;
+  if (target && dist(w, target) <= cfg.range) {
+    w.path = [];
+    if (w.cooldown <= 0) {
+      w.cooldown = cfg.interval;
+      for (const m of state.monsters) if (m.hp > 0 && dist(m, target) <= cfg.splash) m.hp -= cfg.damage;   // magi: ingen rustning
+      state.shots.push({ x1: w.x, y1: w.y, x2: target.x, y2: target.y, t: 0.12, color: '#a855f7', splash: cfg.splash });
+    }
+    return;
+  }
+  const goal = target || defaultRally(w.b);
+  if (w.repath <= 0) { w.path = dist(w, goal) > 0.1 ? findPath(w, goal) : []; w.repath = 0.5; }
+  followPath(w, heroSpeed(), dt);
 }
 
 function soldierTakeDamage(s, raw) {
@@ -1231,6 +1270,9 @@ function buildToolbar() {
     if (up !== null) add(`Opgradér til ${BUILDINGS[d.upgradesTo].name} <small>${up} g</small>`, false, () => upgrade(b), up > state.gold);
     if (hasHp(b) && b.hp < maxHp(b)) add(`Reparér <small>${repairCost(b)} g</small>`, false, () => repair(b), repairCost(b) > state.gold);
     if (d.soldiers) add('Flyt soldater', false, () => { state.rallyFor = b; say('Tryk hvor soldaterne skal stå.'); });
+    if (d.tower && d.tower.magic && !b.wizard) {
+      add(`Køb magiker <small>${CONFIG.wizard.cost} g</small>`, false, () => buyWizard(b), CONFIG.wizard.cost > state.gold);
+    }
     add(`Sælg <small>+${sellValue(b)} g</small>`, false, () => sell(b));
     add('Luk', false, () => { state.selected = null; });
     bar.hidden = false;
@@ -1421,6 +1463,14 @@ function draw() {
       ctx.lineTo(m.x * tile, m.y * tile + r); ctx.lineTo(m.x * tile - r * 1.4, m.y * tile); ctx.closePath(); ctx.fill();
     } else circle(m.x, m.y, m.s.r, m.s.color);
     if (m.hp < m.maxHp) hpBar(m.x, m.y, m.hp / m.maxHp);
+  }
+
+  // magikere: lilla trekanter
+  for (const w of state.wizards) {
+    const r = tile * 0.3;
+    ctx.fillStyle = '#9333ea'; ctx.strokeStyle = '#1e1b4b'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(w.x * tile, w.y * tile - r); ctx.lineTo(w.x * tile + r * 0.9, w.y * tile + r * 0.7);
+    ctx.lineTo(w.x * tile - r * 0.9, w.y * tile + r * 0.7); ctx.closePath(); ctx.fill(); ctx.stroke();
   }
 
   // soldater
