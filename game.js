@@ -1000,7 +1000,8 @@ function updateMonster(m, dt) {
 
   if (s.move === 'fly') {   // flagermus flyver lige mod borgen hen over alt
     const c = state.map.castle;
-    const tx = Math.min(Math.max(m.x, c.x), c.x + c.w), ty = Math.min(Math.max(m.y, c.y), c.y + c.h);
+    // sigt mod et punkt et stykke inde i borgen; kanten selv (fx et hjørne) ligger uden for borgens felter
+    const tx = Math.min(Math.max(m.x, c.x + 0.5), c.x + c.w - 0.5), ty = Math.min(Math.max(m.y, c.y + 0.5), c.y + c.h - 0.5);
     moveToward(m, tx, ty, s.speed * dt);
     if (isCastle(Math.floor(m.x), Math.floor(m.y))) { state.lives -= s.castleDamage; m.done = true; }
     return;
