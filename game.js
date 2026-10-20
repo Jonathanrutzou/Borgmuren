@@ -12,6 +12,8 @@ const CONFIG = {
   castle: { x: 29, y: 9, w: 3, h: 6 },
   heroSpawn: { x: 27.5, y: 12 },
   // knight.tres (farten er fordoblet)
+  // bow i knight.tres: -3 skade, rækker 4 felter, 10 % hurtigere, rammer flagermus, holder ingen fast
+  bow: { damageBonus: -3, range: 4.0, intervalFactor: 0.9 },
   hero: { hp: 220, damage: 12, armor: 3, attackInterval: 0.8, speed: 3.0,
           engageRange: 0.8, threatRange: 3.0, respawnSec: 10, regenPerSec: 0.005 },  // 0,5 % liv pr. sekund
   soldierRespawnSec: 10,   // døde soldater kommer tilbage én ad gangen
@@ -140,6 +142,7 @@ function newGame() {
     lives: CONFIG.castleLives,
     hero: null,
     heroLv: { attack: 0, damage: 0, hp: 0, move: 0 },
+    weapon: 'sword',        // 'sword' | 'bow' (buen købes for stjerner)
     monsters: [],
     soldiers: [],
     destroyed: [],          // bygninger smadret i denne bølge; de kommer tilbage efter bølgen
@@ -716,6 +719,16 @@ function updateHero(dt) {
   followPath(h, heroSpeed(), dt);
 
   if (state.phase !== 'wave') return;
+  if (state.weapon === 'bow') {   // buen: skyder det nærmeste monster (også flagermus), men holder ingen fast
+    releaseOpponent(h);
+    const t = nearestMonster(h, CONFIG.bow.range);
+    if (t && h.cooldown <= 0) {
+      h.cooldown = heroInterval() * CONFIG.bow.intervalFactor;
+      t.hp -= physical(heroDamage() + CONFIG.bow.damageBonus, t.s.armor);
+      state.shots.push({ x1: h.x, y1: h.y, x2: t.x, y2: t.y, t: 0.12, color: '#15803d' });
+    }
+    return;
+  }
   // slås med nærmeste monster inden for rækkevidde (ikke gennem mure) og hold det fast
   const o = h.opponent;
   if (o && (o.hp <= 0 || o.done || dist(h, o) > cfg.engageRange * 1.5)) releaseOpponent(h);
@@ -1106,6 +1119,7 @@ $('bBuild').onclick = () => {
   buildToolbar();
 };
 $('bSpeed').onclick = () => { state.speed = { 1: 2, 2: 5, 5: 1 }[state.speed]; };
+$('bWeapon').onclick = () => { state.weapon = state.weapon === 'bow' ? 'sword' : 'bow'; };
 $('bStart').onclick = () => { startWave(); buildToolbar(); };
 $('bRestart').onclick = () => playLevel(state.level);
 
@@ -1365,6 +1379,9 @@ function drawHud() {
   $('bBuild').classList.toggle('active', building && state.buildOpen);
   $('bBuild').textContent = building && state.buildOpen ? 'Luk byg' : 'Byg';
   $('bSpeed').textContent = `Tempo x${state.speed}`;
+  $('bWeapon').hidden = !owns('bow');
+  $('bWeapon').textContent = state.weapon === 'bow' ? 'Bue' : 'Sværd';
+  if (!owns('bow')) state.weapon = 'sword';
   $('bSpeed').classList.toggle('active', state.speed > 1);
 
   let msg = '';
@@ -1387,7 +1404,8 @@ function drawHud() {
 // De tre skærme ligger under hinanden; der rulles mellem dem med parallakse (baggrunden flytter sig langsommere).
 const LEVEL_COUNT = 12;      // vises i oversigten; kun bane 1 findes indtil videre
 const PLAYABLE_LEVELS = 1;
-const SHOP = [               // pladsholdere for permanente opgraderinger, der købes for stjerner
+const SHOP = [               // permanente opgraderinger, der købes for stjerner (dem uden id er pladsholdere)
+  { id: 'bow', name: 'Bue til helten', price: 2 },
   { name: 'Nyt våben: Spyd', price: 3 },
   { name: 'Tårne: +10 % skade', price: 2 },
   { name: 'Helten: +20 liv', price: 2 },
@@ -1411,14 +1429,29 @@ function loadProgress() {
       const n = Number(k), st = Number(v);
       if (Number.isInteger(n) && n >= 1 && n <= LEVEL_COUNT && st >= 0 && st <= 3) stars[n] = Math.floor(st);
     }
-    return { stars };
-  } catch (e) { return { stars: {} }; }
+    const owned = {};
+    for (const it of SHOP) if (it.id && p.owned && p.owned[it.id] === true) owned[it.id] = true;
+    return { stars, owned };
+  } catch (e) { return { stars: {}, owned: {} }; }
 }
 const progress = loadProgress();
 function saveProgress() {
   try { localStorage.setItem('borgmuren.progress', JSON.stringify(progress)); } catch (e) { /* ikke vigtigt */ }
 }
 const totalStars = () => Object.values(progress.stars).reduce((a, b) => a + b, 0);
+const spentStars = () => SHOP.reduce((a, it) => a + (it.id && progress.owned[it.id] ? it.price : 0), 0);
+const freeStars = () => totalStars() - spentStars();
+const owns = id => !!progress.owned[id];
+
+function buyShopItem(it) {
+  if (!it.id) return menuSay('Kommer senere.');
+  if (owns(it.id)) return menuSay('Den har du allerede.');
+  if (freeStars() < it.price) return menuSay(`Du mangler ${it.price - freeStars()} ★.`);
+  progress.owned[it.id] = true;
+  saveProgress();
+  menuSay(`${it.name} er købt.`);
+  renderLevels();
+}
 const unlockedLevel = () => { let n = 1; while (progress.stars[n]) n++; return n; };
 const inProgress = n => state.level === n && (state.phase === 'build' || state.phase === 'wave') &&
   (state.wave > 1 || state.phase === 'wave' || state.buildings.size > 0 || state.walls.size > 0);
@@ -1454,13 +1487,15 @@ function renderLevels() {
       [0, 1, 2].map(i => `<span class="${i < st ? 'on' : 'off'}">★</span>`).join('') + '</div>';
     row.appendChild(el);
   }
-  $('starCount').textContent = `Du har ${totalStars()} ★`;
+  $('starCount').textContent = `Du har ${freeStars()} ★`;
   const shop = $('shop');
   shop.innerHTML = '';
   for (const it of SHOP) {
     const b = document.createElement('button');
-    b.innerHTML = `${it.name}<small>${it.price} ★</small>`;
-    b.onclick = () => menuSay('Kommer senere.');
+    const have = it.id && owns(it.id);
+    if (have) b.className = 'owned';
+    b.innerHTML = `${it.name}<small>${have ? 'Købt' : `${it.price} ★`}</small>`;
+    b.onclick = () => buyShopItem(it);
     shop.appendChild(b);
   }
 }

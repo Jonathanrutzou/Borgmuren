@@ -8,6 +8,7 @@ Spil den publicerede web-version: https://claude.ai/artifact/QGt4DxtPdg4iafoo9Z7
 
 ## Sådan spilles
 - **Menuer:** Spillet starter med START. Et tryk ruller ned til baneoversigten. Øverst er banerne med 0-3 stjerner (træk sidelæns for at se flere), og nederst er opgraderinger, der skal købes for stjerner (endnu kun pladsholdere). Tryk på en bane, så ruller den ned til spillet. Knappen "Baner" går tilbage til oversigten. Er banen i gang, kan man vælge mellem at fortsætte og at starte forfra.
+- **Bue:** Buen købes for 2 stjerner i baneoversigten. Derefter skifter knappen Sværd/Bue i spillet heltens våben. Med buen skyder helten 4 felter (også flagermus), men holder ingen monstre fast.
 - **Stjerner:** 3 stjerner, hvis borgen har mindst 18 liv tilbage, 2 stjerner ved mindst 10 liv, ellers 1.
 - **Landskab:** spillet vises altid i landskab, også når skærmen holdes på højkant.
 - **Bane 1** består af 10 runder. Hver runde har en byggefase og en bølge.
