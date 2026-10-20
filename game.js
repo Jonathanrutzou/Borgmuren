@@ -20,6 +20,7 @@ const CONFIG = {
   climbCost: 3,            // ekstra vejpris for at kravle over et hegn
   climbSpeed: 0.35,        // øglen kravler med 35 % af sin fart
   sellRatio: 0.6,          // ældre bygninger sælges for 60 %; nye i samme byggefase for fuld pris
+  starLives: [18, 10],      // borgens liv tilbage for 3 og 2 stjerner (ellers 1)
   spawnIntervalSec: 1.2,
   waveArrivalSec: { 9: 40, 10: 40 },   // runder, hvor alle monstre skal nå at komme på så mange sekunder
   monsterHpGrowth: 0.15,   // +15 % liv pr. bølge
@@ -132,6 +133,7 @@ function newGame() {
     buildings: new Map(),   // celleindeks -> bygning i et felt
     walls: new Map(),       // kant-nøgle -> mur/port på stregen mellem to felter
     phase: 'build',         // 'build' | 'wave' | 'over' | 'won'
+    level: 1,
     wave: 1,
     gold: CONFIG.startGold,
     lives: CONFIG.castleLives,
@@ -1082,7 +1084,7 @@ $('bBuild').onclick = () => {
 };
 $('bSpeed').onclick = () => { state.speed = { 1: 2, 2: 5, 5: 1 }[state.speed]; };
 $('bStart').onclick = () => { startWave(); buildToolbar(); };
-$('bRestart').onclick = () => { newGame(); buildToolbar(); };
+$('bRestart').onclick = () => playLevel(state.level);
 
 // Bundmenuen: bygninger, når byggemenuen er åben, eller panelet for den valgte bygning.
 function buildToolbar() {
@@ -1349,9 +1351,155 @@ function drawHud() {
   const over = state.phase === 'over' || state.phase === 'won';
   $('overlay').hidden = !over;
   if (over) $('overlayText').textContent = state.phase === 'won'
-    ? `Bane 1 klaret! Borgen har ${state.lives} liv tilbage.`
+    ? `Bane ${state.level} klaret! ${'★'.repeat(starsFor(state.lives))}${'☆'.repeat(3 - starsFor(state.lives))} (borgen har ${state.lives} liv tilbage)`
     : `Borgen faldt i runde ${state.wave}`;
 }
+
+// ---------- menuer: start, baneoversigt og spil ----------
+// De tre skærme ligger under hinanden; der rulles mellem dem med parallakse (baggrunden flytter sig langsommere).
+const LEVEL_COUNT = 12;      // vises i oversigten; kun bane 1 findes indtil videre
+const PLAYABLE_LEVELS = 1;
+const SHOP = [               // pladsholdere for permanente opgraderinger, der købes for stjerner
+  { name: 'Nyt våben: Spyd', price: 3 },
+  { name: 'Tårne: +10 % skade', price: 2 },
+  { name: 'Helten: +20 liv', price: 2 },
+  { name: 'Stærkere mure', price: 3 },
+  { name: '+20 startguld', price: 1 },
+  { name: 'Ny tårntype', price: 4 },
+];
+let stage = 0;               // 0 = start, 1 = baneoversigt, 2 = spillet
+
+function starsFor(lives) {
+  const [three, two] = CONFIG.starLives;
+  return lives >= three ? 3 : lives >= two ? 2 : 1;
+}
+
+// Fremskridt gemmes i browseren; mangler det eller er det ødelagt, startes forfra.
+function loadProgress() {
+  try {
+    const p = JSON.parse(localStorage.getItem('borgmuren.progress') || '{}');
+    const stars = {};
+    for (const [k, v] of Object.entries(p.stars || {})) {
+      const n = Number(k), st = Number(v);
+      if (Number.isInteger(n) && n >= 1 && n <= LEVEL_COUNT && st >= 0 && st <= 3) stars[n] = Math.floor(st);
+    }
+    return { stars };
+  } catch (e) { return { stars: {} }; }
+}
+const progress = loadProgress();
+function saveProgress() {
+  try { localStorage.setItem('borgmuren.progress', JSON.stringify(progress)); } catch (e) { /* ikke vigtigt */ }
+}
+const totalStars = () => Object.values(progress.stars).reduce((a, b) => a + b, 0);
+const unlockedLevel = () => { let n = 1; while (progress.stars[n]) n++; return n; };
+const inProgress = n => state.level === n && (state.phase === 'build' || state.phase === 'wave') &&
+  (state.wave > 1 || state.phase === 'wave' || state.buildings.size > 0 || state.walls.size > 0);
+
+function showStage(k, instant) {
+  stage = k;
+  const els = ['menu', 'menuFg', 'menuBg', 'game'].map($);
+  if (instant) for (const el of els) el.style.transition = 'none';
+  $('menu').style.transform = k === 2 ? 'translateY(-100%)' : '';
+  $('menuFg').style.transform = k >= 1 ? 'translateY(-50%)' : '';
+  $('menuBg').style.transform = k === 0 ? '' : k === 1 ? 'translateY(-20%)' : 'translateY(5%)';
+  $('game').style.transform = k === 2 ? '' : 'translateY(100%)';
+  $('menu').style.pointerEvents = k === 2 ? 'none' : '';
+  if (instant) { void $('menu').offsetHeight; for (const el of els) el.style.transition = ''; }
+  if (k === 1) renderLevels();
+}
+
+let menuMsgTimer = 0;
+function menuSay(t) {
+  $('menuMsg').textContent = t; $('menuMsg').hidden = false;
+  clearTimeout(menuMsgTimer); menuMsgTimer = setTimeout(() => { $('menuMsg').hidden = true; }, 2000);
+}
+
+function renderLevels() {
+  const row = $('levels'), open = unlockedLevel();
+  row.innerHTML = '';
+  for (let n = 1; n <= LEVEL_COUNT; n++) {
+    const el = document.createElement('div');
+    el.className = 'lvl' + (n > open ? ' locked' : '') + (inProgress(n) ? ' playing' : '');
+    el.dataset.level = n;
+    const st = progress.stars[n] || 0;
+    el.innerHTML = `<div class="num">${n}</div><div class="stars">` +
+      [0, 1, 2].map(i => `<span class="${i < st ? 'on' : 'off'}">★</span>`).join('') + '</div>';
+    row.appendChild(el);
+  }
+  $('starCount').textContent = `Du har ${totalStars()} ★`;
+  const shop = $('shop');
+  shop.innerHTML = '';
+  for (const it of SHOP) {
+    const b = document.createElement('button');
+    b.innerHTML = `${it.name}<small>${it.price} ★</small>`;
+    b.onclick = () => menuSay('Kommer senere.');
+    shop.appendChild(b);
+  }
+}
+
+function chooseLevel(n) {
+  if (n > unlockedLevel()) return menuSay('Klar de tidligere baner først.');
+  if (n > PLAYABLE_LEVELS) return menuSay(`Bane ${n} er ikke lavet endnu.`);
+  if (inProgress(n)) {
+    $('dlgText').textContent = `Bane ${n} er i gang (runde ${state.wave}).`;
+    $('levelDialog').hidden = false;
+    $('bContinue').onclick = () => { $('levelDialog').hidden = true; showStage(2); };
+    $('bNew').onclick = () => { $('levelDialog').hidden = true; playLevel(n); };
+    return;
+  }
+  playLevel(n);
+}
+
+function playLevel(n) {
+  newGame();
+  state.level = n;
+  zoom = 1; tile = baseTile; camX = 0; camY = 0; clampCamera();
+  buildToolbar();
+  showStage(2);
+}
+
+// Træk sidelæns i baneoversigten (egen håndtering, så det også virker, når spillet er drejet).
+function appPoint(ev) {
+  return rotated ? { x: ev.clientY, y: window.innerWidth - ev.clientX } : { x: ev.clientX, y: ev.clientY };
+}
+let levelDrag = null;
+$('levels').addEventListener('pointerdown', ev => {
+  $('levels').setPointerCapture(ev.pointerId);
+  levelDrag = { x: appPoint(ev).x, scroll: $('levels').scrollLeft, moved: false };
+});
+$('levels').addEventListener('pointermove', ev => {
+  if (!levelDrag) return;
+  const dx = appPoint(ev).x - levelDrag.x;
+  if (Math.abs(dx) > TAP_SLOP) levelDrag.moved = true;
+  if (levelDrag.moved) $('levels').scrollLeft = levelDrag.scroll - dx;
+});
+$('levels').addEventListener('pointerup', ev => {
+  const d = levelDrag; levelDrag = null;
+  if (!d || d.moved) return;
+  const el = document.elementFromPoint(ev.clientX, ev.clientY);
+  const lvl = el && el.closest('.lvl');
+  if (lvl) chooseLevel(Number(lvl.dataset.level));
+});
+$('levels').addEventListener('pointercancel', () => { levelDrag = null; });
+$('levels').addEventListener('wheel', ev => { ev.preventDefault(); $('levels').scrollLeft += ev.deltaX || ev.deltaY; }, { passive: false });
+
+$('scrStart').onclick = () => showStage(1);
+$('bCancel').onclick = () => { $('levelDialog').hidden = true; };
+$('bMenu').onclick = () => { state.selected = null; state.rallyFor = null; buildToolbar(); showStage(1); };
+$('bToMenu').onclick = () => showStage(1);
+
+// Pynt i baggrunden: skyer og bakker, der ruller langsommere end forgrunden.
+(function decorate() {
+  const bg = $('menuBg');
+  const blobs = [[10, 6, 22, 7, '#fff'], [62, 12, 28, 8, '#fff'], [35, 22, 18, 6, '#fff'], [80, 30, 20, 6, '#fff'],
+                 [-10, 62, 60, 30, '#86b05f'], [45, 66, 70, 30, '#7aa553'], [15, 82, 50, 25, '#5f8a42'], [70, 86, 50, 25, '#577f3c']];
+  for (const [x, y, w, hh, c] of blobs) {
+    const d = document.createElement('div');
+    d.className = 'blob';
+    Object.assign(d.style, { left: x + '%', top: y + '%', width: w + '%', height: hh + '%', background: c, opacity: c === '#fff' ? 0.8 : 1 });
+    bg.appendChild(d);
+  }
+})();
 
 // ---------- løkke ----------
 let last = performance.now();
@@ -1359,8 +1507,15 @@ let lastPhase = null;
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  for (let k = 0; k < state.speed; k++) update(dt);
-  if (state.phase !== lastPhase) { lastPhase = state.phase; buildToolbar(); }
+  if (stage === 2) for (let k = 0; k < state.speed; k++) update(dt);   // spillet står stille i menuerne
+  if (state.phase !== lastPhase) {
+    lastPhase = state.phase;
+    if (state.phase === 'won') {
+      progress.stars[state.level] = Math.max(progress.stars[state.level] || 0, starsFor(state.lives));
+      saveProgress();
+    }
+    buildToolbar();
+  }
   draw();
   requestAnimationFrame(frame);
 }
@@ -1368,6 +1523,7 @@ function frame(now) {
 newGame();
 buildToolbar();
 resize();
+showStage(0, true);
 requestAnimationFrame(frame);
 window.borgmuren = { get state() { return state; }, update, startWave, placeCell, placeEdge, moveHero, tap,
-                     recomputeField, hasOpening, setRally, CONFIG, BUILDINGS, hKey, vKey };
+                     recomputeField, hasOpening, setRally, showStage, playLevel, CONFIG, BUILDINGS, hKey, vKey };
