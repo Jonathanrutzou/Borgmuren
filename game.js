@@ -15,6 +15,7 @@ const CONFIG = {
   hero: { hp: 220, damage: 12, armor: 3, attackInterval: 0.8, speed: 3.0,
           engageRange: 0.8, threatRange: 3.0, respawnSec: 10, regenPerSec: 0.005 },  // 0,5 % liv pr. sekund
   soldierRespawnSec: 10,   // døde soldater kommer tilbage én ad gangen
+  soldierRegenPerSec: 0.002,   // soldater heler 0,2 % af deres liv pr. sekund
   buildingHp: 100,         // liv for bygninger; monstrene kan smadre dem og porte, men ikke mure
   towerThreatRange: 10,    // monstre går efter tårne, de kan nå i lige linje inden for så mange felter
   climbCost: 3,            // ekstra vejpris for at kravle over et hegn
@@ -141,6 +142,7 @@ function newGame() {
     heroLv: { attack: 0, damage: 0, hp: 0, move: 0 },
     monsters: [],
     soldiers: [],
+    destroyed: [],          // bygninger smadret i denne bølge; de kommer tilbage efter bølgen
     shots: [],
     spawnQueue: [],
     spawnTimer: 0,
@@ -627,9 +629,17 @@ function startWave() {
 function endWave() {
   state.shots = [];
   state.rallyFor = null;
-  let income = 0;
+  let income = 0;   // gårde, der blev smadret i bølgen, giver ikke guld
   for (const b of state.buildings.values()) income += dataOf(b).income || 0;
   state.gold += income;
+  for (const b of state.destroyed) {   // smadrede bygninger kommer tilbage med fuldt liv
+    if (state.buildings.has(idx(b.x, b.y))) continue;
+    b.hp = maxHp(b);
+    state.buildings.set(idx(b.x, b.y), b);
+    if (dataOf(b).soldiers) makeSoldiers(b);
+  }
+  state.destroyed = [];
+  recomputeField();
   // fuld liv til helt, soldater og bueskytter efter hver runde
   const h = state.hero;
   if (!h.alive) Object.assign(h, newHero());
@@ -749,6 +759,7 @@ function updateSoldier(s, dt) {
     return;
   }
   s.cooldown = Math.max(0, s.cooldown - dt);
+  s.hp = Math.min(st.hp, s.hp + st.hp * CONFIG.soldierRegenPerSec * dt);   // soldaterne heler langsomt
 
   if (state.phase === 'wave') {
     if (st.range) {   // bueskytter: skyder, holder ikke fast
@@ -924,7 +935,10 @@ function smash(m, o) {
   if (m.cooldown > 0) return;
   m.cooldown = m.s.interval;
   o.hp -= m.s.damage;
-  if (o.hp <= 0) removeBuilding(o);
+  if (o.hp <= 0) {
+    if (!isWall(o)) state.destroyed.push(o);   // bygninger kommer tilbage efter bølgen (porte gør ikke)
+    removeBuilding(o);
+  }
 }
 
 // Stedet lige foran tårnet b, set fra monsteret m.
@@ -1526,4 +1540,4 @@ resize();
 showStage(0, true);
 requestAnimationFrame(frame);
 window.borgmuren = { get state() { return state; }, update, startWave, placeCell, placeEdge, moveHero, tap,
-                     recomputeField, hasOpening, setRally, showStage, playLevel, CONFIG, BUILDINGS, hKey, vKey };
+                     recomputeField, hasOpening, setRally, showStage, playLevel, smash, CONFIG, BUILDINGS, hKey, vKey };
