@@ -41,14 +41,14 @@ const MONSTERS = {
   // boss i sidste runde: stor og langsom, og der kommer små monstre ud af den, hver gang den
   // har mistet 10 % af sit liv (splitEvery), og resten, når den dør
   boss: { name: 'Kæmpe-trold', hp: 500, armor: 3, speed: 0.45, bounty: 40, castleDamage: 5, damage: 15, interval: 1.5, color: '#7f1d1d', r: 0.6,
-          boss: true, splitEvery: 0.1, splitKinds: ['blue', 'blue', 'red'] },
+          boss: true, breaksFences: true, splitEvery: 0.1, splitKinds: ['blue', 'blue', 'red'] },
   bat:  { name: 'Flagermus', hp: 18, armor: 0, speed: 1.3, bounty: 4, castleDamage: 1, damage: 2, interval: 1.0, color: '#a855f7', r: 0.22, move: 'fly' },
 };
 
 // content/buildings/*.tres – kun Gård som pengebygning (ingen vindmølle eller miner).
 // edge: ligger på stregen mellem to felter (mure og porte), ikke i et felt.
 const BUILDINGS = {
-  fence:      { name: 'Hegn', cost: 4, edge: true, climbable: true, width: 0.12, upgradesTo: 'stone_wall', color: '#b45309' },
+  fence:      { name: 'Hegn', cost: 4, edge: true, climbable: true, hp: 40, width: 0.12, upgradesTo: 'stone_wall', color: '#b45309' },
   stone_wall: { name: 'Stenmur', cost: 10, edge: true, width: 0.24, upgradesTo: 'tall_wall', color: '#6b7280' },
   tall_wall:  { name: 'Høj mur', cost: 30, edge: true, width: 0.34, color: '#374151' },
   gate:       { name: 'Port', cost: 25, edge: true, width: 0.24, hp: 150, gate: true, upgradesTo: 'iron_gate', color: '#92400e' },
@@ -56,8 +56,8 @@ const BUILDINGS = {
   net:        { name: 'Klæbenet', cost: 15, blocks: false, slow: 0.4, color: '#a8a29e', label: 'N' },
   archer:     { name: 'Bueskyttetårn', cost: 40, blocks: true, tower: { damage: 10, range: 3.0, interval: 0.5 }, upgradesTo: 'archer_2', color: '#15803d', label: 'B' },
   archer_2:   { name: 'Langbuetårn', cost: 95, blocks: true, tower: { damage: 16, range: 5, interval: 0.5 }, tier: 2, color: '#166534', label: 'B' },
-  cannon:     { name: 'Kanontårn', cost: 70, blocks: true, tower: { damage: 18, range: 2.3, interval: 1, splash: 0.9, ground: true }, upgradesTo: 'cannon_2', color: '#1f2937', label: 'K' },
-  cannon_2:   { name: 'Stor kanon', cost: 160, blocks: true, tower: { damage: 35, range: 2.6, interval: 1, splash: 1.1, ground: true }, tier: 2, color: '#111827', label: 'K' },
+  cannon:     { name: 'Kanontårn', cost: 70, blocks: true, tower: { damage: 18, range: 2.3, interval: 1, splash: 0.9, ground: true, shatter: 2 }, upgradesTo: 'cannon_2', color: '#1f2937', label: 'K' },
+  cannon_2:   { name: 'Stor kanon', cost: 160, blocks: true, tower: { damage: 35, range: 2.6, interval: 1, splash: 1.1, ground: true, shatter: 2 }, tier: 2, color: '#111827', label: 'K' },
   mage:       { name: 'Magertårn', cost: 130, blocks: true, tower: { damage: 10, range: 50, interval: 3.0, magic: true }, upgradesTo: 'mage_2', color: '#7c3aed', label: 'T' },
   // frysetårn: lammer monstre i nogle sekunder (freeze), rammer ikke flyvende
   frost:      { name: 'Frysetårn', cost: 60, blocks: true, tower: { damage: 2, range: 2.5, interval: 2.0, splash: 0.6, freeze: 1.5, ground: true }, upgradesTo: 'frost_2', color: '#0891b2', label: 'F' },
@@ -317,8 +317,8 @@ function edgeAtPoint(p) {
 //      'hero'    (som walker, men kan også gå gennem opgraderede hegn og mure),
 //      'open'    (som walker, men borgen tæller som mål – til reglen om en åben vej).
 const isWalker = who => who === 'walker' || who === 'hero';
-const isMonster = who => who === 'monster' || who === 'climber';
-const moverOf = m => (m.s.move === 'climb' ? 'climber' : 'monster');
+const isMonster = who => who === 'monster' || who === 'climber' || who === 'breaker';
+const moverOf = m => (m.s.move === 'climb' ? 'climber' : m.s.breaksFences ? 'breaker' : 'monster');
 
 function cellCost(x, y, who) {
   if (!inBounds(x, y) || isObstacle(x, y)) return Infinity;
@@ -336,6 +336,7 @@ function edgeCost(ax, ay, bx, by, who) {
   const d = dataOf(w);
   if (!d.gate) {
     if (who === 'climber' && d.climbable) return CONFIG.climbCost;   // øglen kravler over hegn
+    if (who === 'breaker' && d.climbable) return 1 + (w.hp ?? d.hp) / 5;   // bossen smadrer hegn
     return who === 'hero' && w.heroDoor ? 0 : Infinity;               // kun helten kan gå gennem opgraderede mure
   }
   return isMonster(who) ? 1 + w.hp / 5 : 0;   // monstrene skal smadre porten først
@@ -364,14 +365,14 @@ function stepCost(ax, ay, dx, dy, who) {
 // Monstrene går først efter tårne, så efter gårde og til sidst efter borgen, uanset afstand.
 // Derfor er der et afstandsfelt til hvert slags mål (pr. bevægelsestype).
 function recomputeField() {
-  state.fields = { monster: buildField('monster'), climber: buildField('climber') };
+  state.fields = { monster: buildField('monster'), climber: buildField('climber'), breaker: buildField('breaker') };
   const towers = [], farms = [];
   for (const b of state.buildings.values()) {
     if (dataOf(b).tower) towers.push(b); else if (dataOf(b).income) farms.push(b);
   }
   const seeds = list => list.flatMap(b => attackSpots(b).map(p => idx(p.cx, p.cy)));
   state.targetFields = {};
-  for (const who of ['monster', 'climber']) {
+  for (const who of ['monster', 'climber', 'breaker']) {
     state.targetFields[who] = { tower: towers.length ? buildField(who, seeds(towers)) : null,
                                 farm: farms.length ? buildField(who, seeds(farms)) : null };
   }
@@ -653,7 +654,8 @@ function upgrade(b) {
   state.gold -= c; b.spent += c;
   if (isWall(b) && !dataOf(b).gate) b.heroDoor = true;   // helten kan gå gennem opgraderede hegn og mure
   b.id = dataOf(b).upgradesTo;
-  if (hasHp(b)) b.hp = maxHp(b);
+  if (isWall(b) && !dataOf(b).gate) delete b.hp;   // mure kan ikke smadres (kun bossen smadrer hegn)
+  else if (hasHp(b)) b.hp = maxHp(b);
   if (dataOf(b).soldiers) makeSoldiers(b);
   recomputeField();
 }
@@ -1044,7 +1046,8 @@ function updateTower(b, dt) {
   b.cooldown = t.interval;
   const dmg = Math.round(t.damage * towerBoost(b));
   const hit = m => {
-    m.hp -= t.magic ? dmg : physical(dmg, m.s.armor);
+    const d = t.shatter && m.frozen > 0 ? dmg * t.shatter : dmg;   // kanoner knuser frosne monstre (dobbelt skade)
+    m.hp -= t.magic ? d : physical(d, m.s.armor);
     if (t.freeze) m.frozen = Math.max(m.frozen || 0, t.freeze);
   };
   if (t.splash) { for (const m of state.monsters) if (m.hp > 0 && canHit(m) && dist(m, target) <= t.splash) hit(m); }
@@ -1072,12 +1075,15 @@ function monsterWaypoint(m) {
     const n = nextStep(cx, cy, who, field);
     if (!n) break;
     const wall = (!n.dx || !n.dy) ? wallBetween(cx, cy, n.x, n.y) : null;
-    if (wall && !dataOf(wall).gate) {   // et hegn, øglen kravler over
+    if (wall && !dataOf(wall).gate && who !== 'breaker') {   // et hegn, øglen kravler over
       if (k === 0) return { kind: 'climb', at: center(cx, cy), p: center(n.x, n.y) };
       break;
     }
     if (isBlocking(n.x, n.y) || wall) {
-      if (k === 0) return { kind: 'attack', at: center(cx, cy), obj: wall || buildingAt(n.x, n.y) };
+      if (k === 0) {
+        if (wall && wall.hp === undefined) wall.hp = maxHp(wall);   // et hegn, bossen begynder at smadre
+        return { kind: 'attack', at: center(cx, cy), obj: wall || buildingAt(n.x, n.y) };
+      }
       break;
     }
     pts.push(center(n.x, n.y));
