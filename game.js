@@ -14,7 +14,7 @@ const CONFIG = {
   bow: { damageBonus: -3, range: 4.0, intervalFactor: 0.9 },
   // magikeren købes i et magertårn: angriber altid monsteret nærmest tårnet, går lige så hurtigt
   // som helten, rækker 6 felter, slår hurtigt med område-skade (magi, også flagermus), men svagt
-  wizard: { cost: 80, damage: 5, interval: 0.5, range: 6, splash: 0.8 },
+  wizard: { cost: 80, damage: 5, interval: 0.5, range: 6, splash: 0.8, hp: 80, armor: 0, respawnSec: 10 },
   hero: { hp: 220, damage: 12, armor: 3, attackInterval: 0.8, speed: 3.0,
           engageRange: 0.8, threatRange: 3.0, respawnSec: 10, regenPerSec: 0.005 },  // 0,5 % liv pr. sekund
   soldierRespawnSec: 10,   // døde soldater kommer tilbage én ad gangen
@@ -724,6 +724,10 @@ function endWave() {
   const h = state.hero;
   if (!h.alive) Object.assign(h, newHero());
   h.hp = heroMax(); h.opponent = null;
+  for (const w of state.wizards) {   // magikere får også fuldt liv
+    if (!w.alive) Object.assign(w, defaultRally(w.b));
+    w.alive = true; w.hp = CONFIG.wizard.hp; w.path = [];
+  }
   for (const s of state.soldiers) {
     s.b.reviving = null;
     if (!s.alive) { s.x = s.post.x; s.y = s.post.y; }
@@ -901,11 +905,16 @@ function buyWizard(b) {
 }
 function addWizard(b) {
   const p = defaultRally(b);
-  state.wizards.push({ b, x: p.x, y: p.y, cooldown: 0, path: [], repath: 0 });
+  state.wizards.push({ b, x: p.x, y: p.y, hp: CONFIG.wizard.hp, alive: true, cooldown: 0, path: [], repath: 0 });
 }
 
 function updateWizard(w, dt) {
   const cfg = CONFIG.wizard;
+  if (!w.alive) {   // død: kommer tilbage ved tårnet efter 10 sek.
+    w.respawn -= dt;
+    if (w.respawn <= 0) Object.assign(w, defaultRally(w.b), { alive: true, hp: cfg.hp, path: [], repath: 0 });
+    return;
+  }
   w.cooldown = Math.max(0, w.cooldown - dt);
   w.repath -= dt;
   // målet er altid monsteret nærmest tårnet
@@ -922,6 +931,11 @@ function updateWizard(w, dt) {
   const goal = target || defaultRally(w.b);
   if (w.repath <= 0) { w.path = dist(w, goal) > 0.1 ? findPath(w, goal) : []; w.repath = 0.5; }
   followPath(w, heroSpeed(), dt);
+}
+
+function wizardTakeDamage(w, raw) {
+  w.hp -= physical(raw, CONFIG.wizard.armor);
+  if (w.hp <= 0) { w.alive = false; w.respawn = CONFIG.wizard.respawnSec; w.path = []; }
 }
 
 function soldierTakeDamage(s, raw) {
@@ -1033,6 +1047,14 @@ function updateMonster(m, dt) {
     m.repath = 0;
     return;
   }
+  // magikere tæt på bliver også angrebet
+  const wz = state.wizards.find(w => w.alive && dist(w, m) <= CONFIG.hero.threatRange && losClear(m, w, moverOf(m)));
+  if (wz) {
+    if (dist(wz, m) > CONFIG.hero.engageRange * 0.9) moveToward(m, wz.x, wz.y, s.speed * dt);
+    else if (m.cooldown <= 0) { m.cooldown = s.interval; wizardTakeDamage(wz, s.damage); }
+    m.repath = 0;
+    return;
+  }
 
   m.repath -= dt;
   if (m.repath <= 0 || !m.wp) { m.wp = monsterWaypoint(m); m.repath = 0.25; }
@@ -1060,8 +1082,9 @@ function smash(m, o) {
   m.cooldown = m.s.interval;
   o.hp -= m.s.damage;
   if (o.hp <= 0) {
-    // bygninger kommer tilbage efter bølgen; porte og gårde (pengebygninger) gør ikke
-    if (!isWall(o) && !dataOf(o).income) state.destroyed.push(o);
+    // bygninger kommer tilbage efter bølgen; porte, gårde og magertårne gør ikke
+    const d = dataOf(o);
+    if (!isWall(o) && !d.income && !(d.tower && d.tower.magic)) state.destroyed.push(o);   // gårde og magertårne heller ikke
     removeBuilding(o);
   }
 }
@@ -1487,10 +1510,12 @@ function draw() {
 
   // magikere: lilla trekanter
   for (const w of state.wizards) {
+    if (!w.alive) continue;
     const r = tile * 0.3;
     ctx.fillStyle = '#9333ea'; ctx.strokeStyle = '#1e1b4b'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(w.x * tile, w.y * tile - r); ctx.lineTo(w.x * tile + r * 0.9, w.y * tile + r * 0.7);
     ctx.lineTo(w.x * tile - r * 0.9, w.y * tile + r * 0.7); ctx.closePath(); ctx.fill(); ctx.stroke();
+    if (w.hp < CONFIG.wizard.hp) hpBar(w.x, w.y, w.hp / CONFIG.wizard.hp);
   }
 
   // soldater
