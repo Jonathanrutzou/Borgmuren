@@ -53,6 +53,9 @@ const BUILDINGS = {
   cannon:     { name: 'Kanontårn', cost: 70, blocks: true, tower: { damage: 18, range: 2.3, interval: 1, splash: 0.9, ground: true }, upgradesTo: 'cannon_2', color: '#1f2937', label: 'K' },
   cannon_2:   { name: 'Stor kanon', cost: 160, blocks: true, tower: { damage: 35, range: 2.6, interval: 1, splash: 1.1, ground: true }, tier: 2, color: '#111827', label: 'K' },
   mage:       { name: 'Magertårn', cost: 130, blocks: true, tower: { damage: 10, range: 50, interval: 3.0, magic: true }, upgradesTo: 'mage_2', color: '#7c3aed', label: 'T' },
+  // frysetårn: lammer monstre i nogle sekunder (freeze), rammer ikke flyvende
+  frost:      { name: 'Frysetårn', cost: 60, blocks: true, tower: { damage: 2, range: 2.5, interval: 2.0, splash: 0.6, freeze: 1.5, ground: true }, upgradesTo: 'frost_2', color: '#0891b2', label: 'F' },
+  frost_2:    { name: 'Istårn', cost: 130, blocks: true, tower: { damage: 4, range: 3.0, interval: 1.6, splash: 0.8, freeze: 2.2, ground: true }, tier: 2, color: '#0e7490', label: 'F' },
   mage_2:     { name: 'Ærkemagertårn', cost: 240, blocks: true, tower: { damage: 20, range: 50, interval: 2.4, magic: true }, tier: 2, color: '#5b21b6', label: 'T' },
   barracks:   { name: 'Kaserne', cost: 60, blocks: true, soldiers: { count: 2, hp: 90, damage: 7, armor: 1, interval: 1.0 }, upgradesTo: 'barracks_2', color: '#0e7490', label: 'Ka' },
   barracks_2: { name: 'Stor kaserne', cost: 120, blocks: true, soldiers: { count: 3, hp: 130, damage: 10, armor: 2, interval: 0.9 }, upgradesTo: 'barracks_3', tier: 2, color: '#155e75', label: 'Ka' },
@@ -71,7 +74,7 @@ const HERO_UPGRADES = {
 };
 const HERO_MAX_LEVEL = 10;
 
-const TOOLBAR = ['fence', 'stone_wall', 'gate', 'net', 'archer', 'cannon', 'mage', 'barracks', 'archer_camp', 'smithy', 'farm'];
+const TOOLBAR = ['fence', 'stone_wall', 'gate', 'net', 'archer', 'cannon', 'mage', 'frost', 'barracks', 'archer_camp', 'smithy', 'farm'];
 const SOLDIER_ENGAGE = 0.9;   // soldaterne holder monstre inden for dette
 const SOLDIER_GUARD = 2.0;    // og går ud efter monstre så langt fra deres post
 const SOLDIER_SPEED = 1.5;
@@ -959,15 +962,19 @@ function updateTower(b, dt) {
   b.cooldown = Math.max(0, b.cooldown - dt);
   if (b.cooldown > 0) return;
   const c = center(b.x, b.y);
-  const canHit = m => !t.ground || m.s.move !== 'fly';   // kanoner rammer ikke flyvende
-  const target = nearestMonster(c, t.range, canHit);
+  const canHit = m => !t.ground || m.s.move !== 'fly';   // kanoner og frysetårne rammer ikke flyvende
+  // frysetårne sigter helst på monstre, der ikke allerede er frosne
+  const target = (t.freeze && nearestMonster(c, t.range, m => canHit(m) && !(m.frozen > 0))) || nearestMonster(c, t.range, canHit);
   if (!target) return;
   b.cooldown = t.interval;
   const dmg = Math.round(t.damage * towerBoost(b));
-  const hit = m => { m.hp -= t.magic ? dmg : physical(dmg, m.s.armor); };
+  const hit = m => {
+    m.hp -= t.magic ? dmg : physical(dmg, m.s.armor);
+    if (t.freeze) m.frozen = Math.max(m.frozen || 0, t.freeze);
+  };
   if (t.splash) { for (const m of state.monsters) if (m.hp > 0 && canHit(m) && dist(m, target) <= t.splash) hit(m); }
   else hit(target);
-  state.shots.push({ x1: c.x, y1: c.y, x2: target.x, y2: target.y, t: 0.12, color: t.magic ? '#7c3aed' : '#111', splash: t.splash });
+  state.shots.push({ x1: c.x, y1: c.y, x2: target.x, y2: target.y, t: 0.12, color: t.magic ? '#7c3aed' : t.freeze ? '#22d3ee' : '#111', splash: t.splash });
 }
 
 // Hvor monsteret skal hen nu: det fjerneste punkt på vejen, det kan se i lige linje.
@@ -1009,6 +1016,7 @@ function monsterWaypoint(m) {
 
 function updateMonster(m, dt) {
   const s = m.s;
+  if (m.frozen > 0) { m.frozen -= dt; return; }   // frosset: står helt stille og slår ikke
   m.cooldown = Math.max(0, m.cooldown - dt);
   const h = state.hero;
 
@@ -1505,6 +1513,7 @@ function draw() {
       ctx.beginPath(); ctx.moveTo(m.x * tile, m.y * tile - r); ctx.lineTo(m.x * tile + r * 1.4, m.y * tile);
       ctx.lineTo(m.x * tile, m.y * tile + r); ctx.lineTo(m.x * tile - r * 1.4, m.y * tile); ctx.closePath(); ctx.fill();
     } else circle(m.x, m.y, m.s.r, m.s.color);
+    if (m.frozen > 0) circle(m.x, m.y, m.s.r + 0.08, 'rgba(165,243,252,0.55)', '#0891b2');   // frosset: is omkring
     if (m.hp < m.maxHp) hpBar(m.x, m.y, m.hp / m.maxHp);
   }
 
