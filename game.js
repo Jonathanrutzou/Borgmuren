@@ -12,6 +12,8 @@ const CONFIG = {
   // knight.tres (farten er fordoblet)
   // bow i knight.tres: -3 skade, rækker 4 felter, 10 % hurtigere, rammer flagermus, holder ingen fast
   bow: { damageBonus: -3, range: 4.0, intervalFactor: 0.9 },
+  // heltens hop: lander efter airSec, skader monstre inden for radius og skubber dem push felter væk
+  jump: { cooldownSec: 12, airSec: 0.55, radius: 2.0, push: 3, damage: 25, pushSpeed: 12 },
   // magikeren købes i et magertårn: angriber altid monsteret nærmest tårnet, går lige så hurtigt
   // som helten, rækker 6 felter, slår hurtigt med område-skade (magi, også flagermus), men svagt
   wizard: { cost: 80, damage: 5, interval: 0.5, range: 6, splash: 0.8, hp: 80, armor: 0, respawnSec: 10 },
@@ -210,6 +212,8 @@ function newGame(map = parseLevel(LEVELS[0])) {
     hero: null,
     heroLv: { attack: 0, damage: 0, hp: 0, move: 0 },
     weapon: 'sword',        // 'sword' | 'bow' (buen købes for stjerner)
+    jumpCooldown: 0,        // sekunder til helten kan hoppe igen
+    effects: [],            // chokbølger fra heltens hop
     monsters: [],
     soldiers: [],
     wizards: [],            // magikere fra magertårne
@@ -715,6 +719,7 @@ function startWave() {
 
 function endWave() {
   state.shots = [];
+  state.effects = [];
   state.rallyFor = null;
   let income = 0;   // gårde, der blev smadret i bølgen, er væk og giver ikke guld
   for (const b of state.buildings.values()) income += dataOf(b).income || 0;
@@ -805,6 +810,8 @@ function update(dt) {
   for (const m of state.monsters) if (m.hp <= 0 && !m.paid) { m.paid = true; if (!m.done) state.gold += m.s.bounty; }
   state.monsters = state.monsters.filter(m => m.hp > 0 && !m.done);
   for (const sh of state.shots) sh.t -= dt;
+  for (const e of state.effects) e.t += dt;
+  state.effects = state.effects.filter(e => e.t < e.dur);
   state.shots = state.shots.filter(sh => sh.t > 0);
 
   if (state.lives <= 0) { state.lives = 0; state.phase = 'over'; return; }
@@ -835,6 +842,12 @@ function updateHero(dt) {
   }
   h.cooldown = Math.max(0, h.cooldown - dt);
   h.hp = Math.min(heroMax(), h.hp + heroMax() * cfg.regenPerSec * dt);   // helten heler langsomt
+  state.jumpCooldown = Math.max(0, state.jumpCooldown - dt);
+  if (h.jump !== undefined) {   // i luften: står stille, lander og laver en chokbølge
+    h.jump += dt;
+    if (h.jump >= CONFIG.jump.airSec) { delete h.jump; landJump(h); }
+    return;
+  }
   followPath(h, heroSpeed(), dt);
 
   if (state.phase !== 'wave') return;
@@ -860,6 +873,38 @@ function updateHero(dt) {
     h.opponent.hp -= physical(heroDamage(), h.opponent.s.armor);
     state.shots.push({ x1: h.x, y1: h.y, x2: h.opponent.x, y2: h.opponent.y, t: 0.1, color: '#16a34a' });
   }
+}
+
+// ---------- heltens hop ----------
+function heroJump() {
+  const h = state.hero;
+  if (state.phase !== 'wave' || !h.alive || h.jump !== undefined || state.jumpCooldown > 0) return;
+  h.jump = 0; h.path = [];
+  releaseOpponent(h);
+  state.jumpCooldown = CONFIG.jump.cooldownSec;
+}
+
+function landJump(h) {
+  const cfg = CONFIG.jump;
+  state.effects.push({ x: h.x, y: h.y, t: 0, dur: 0.45, r: cfg.radius });
+  for (const m of state.monsters) {
+    if (m.hp <= 0 || m.done || m.s.move === 'fly') continue;
+    const d = dist(h, m);
+    if (d > cfg.radius) continue;
+    m.hp -= physical(cfg.damage, m.s.armor);
+    const a = d > 0.01 ? Math.atan2(m.y - h.y, m.x - h.x) : Math.random() * Math.PI * 2;
+    m.push = { dx: Math.cos(a), dy: Math.sin(a), left: cfg.push };
+    m.heldBy = null; m.climbTo = null; m.wp = null;
+  }
+}
+
+// Skubbet af hoppet: glider væk, til det har flyttet sig langt nok eller rammer en mur.
+function pushMonster(m, dt) {
+  const p = m.push, step = Math.min(p.left, CONFIG.jump.pushSpeed * dt);
+  const nx = m.x + p.dx * step, ny = m.y + p.dy * step;
+  if (step <= 0 || !segClear(m.x, m.y, nx, ny, moverOf(m)) || isCastle(Math.floor(nx), Math.floor(ny))) { delete m.push; return; }
+  m.x = nx; m.y = ny; p.left -= step;
+  if (p.left <= 0) delete m.push;
 }
 
 function moveHero(target) {
@@ -1046,6 +1091,7 @@ function monsterWaypoint(m) {
 
 function updateMonster(m, dt) {
   const s = m.s;
+  if (m.push) { pushMonster(m, dt); m.repath = 0; return; }   // skubbet af heltens hop
   if (m.frozen > 0) { m.frozen -= dt; return; }   // frosset: står helt stille og slår ikke
   m.cooldown = Math.max(0, m.cooldown - dt);
   const h = state.hero;
@@ -1293,6 +1339,7 @@ $('bBuild').onclick = () => {
 };
 $('bSpeed').onclick = () => { state.speed = { 1: 2, 2: 5, 5: 1 }[state.speed]; };
 $('bWeapon').onclick = () => { state.weapon = state.weapon === 'bow' ? 'sword' : 'bow'; };
+$('bJump').onclick = () => heroJump();
 $('bStart').onclick = () => { startWave(); buildToolbar(); };
 $('bRestart').onclick = () => (state.level ? playLevel(state.level) : startMap(state.map, 0));
 
@@ -1632,6 +1679,14 @@ function draw() {
     if (s.hp < s.stats.hp) hpBar(s.x, s.y, s.hp / s.stats.hp);
   }
 
+  // chokbølger fra hoppet: en ring, der vokser og falmer
+  for (const e of state.effects) {
+    const f = e.t / e.dur;
+    ctx.strokeStyle = `rgba(22,101,52,${1 - f})`; ctx.lineWidth = Math.max(2, tile * 0.18 * (1 - f));
+    ctx.beginPath(); ctx.arc(e.x * tile, e.y * tile, e.r * tile * (0.3 + 0.7 * f), 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = `rgba(134,239,172,${0.25 * (1 - f)})`; ctx.fill();
+  }
+
   // helt
   const h = state.hero;
   if (h.alive) {
@@ -1643,8 +1698,11 @@ function draw() {
       ctx.stroke(); ctx.setLineDash([]);
       circle(goal.x, goal.y, 0.15, null, '#16a34a');
     }
-    circle(h.x, h.y, 0.4, '#16a34a', '#052e16');
-    hpBar(h.x, h.y, h.hp / heroMax(), 0.65);
+    // i luften: helten løfter sig og bliver større, skyggen bliver på jorden
+    const air = h.jump !== undefined ? Math.sin(Math.PI * h.jump / CONFIG.jump.airSec) : 0;
+    const lift = air * 0.7, size = 0.4 * (1 + 0.45 * air);
+    circle(h.x, h.y - lift, size, '#16a34a', '#052e16');
+    hpBar(h.x, h.y - lift, h.hp / heroMax(), 0.65 + lift * 0.3);
   } else {
     const s = state.map.heroSpawn;
     circle(s.x, s.y, 0.4, null, '#dc2626');
@@ -1685,6 +1743,9 @@ function drawHud() {
   $('bBuild').textContent = building && state.buildOpen ? 'Luk byg' : 'Byg';
   $('bSpeed').textContent = `Tempo x${state.speed}`;
   $('bWeapon').hidden = !owns('bow');
+  $('bJump').hidden = state.phase !== 'wave';
+  $('bJump').disabled = state.jumpCooldown > 0 || !h.alive;
+  $('bJump').textContent = state.jumpCooldown > 0 ? `Hop (${Math.ceil(state.jumpCooldown)})` : 'Hop!';
   $('bWeapon').textContent = state.weapon === 'bow' ? 'Bue' : 'Sværd';
   if (!owns('bow')) state.weapon = 'sword';
   $('bSpeed').classList.toggle('active', state.speed > 1);
