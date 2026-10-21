@@ -36,6 +36,10 @@ const MONSTERS = {
   // lizard.tres: kravler over hegn (langsomt), men ikke over mure
   lizard: { name: 'Øgle', hp: 35, armor: 1, speed: 0.9, bounty: 4, castleDamage: 1, damage: 4, interval: 1.0, color: '#f97316', r: 0.24, move: 'climb' },
   // bat.tres: flyver lige mod borgen hen over alt
+  // boss i sidste runde: stor og langsom, og der kommer små monstre ud af den, hver gang den
+  // har mistet 10 % af sit liv (splitEvery), og resten, når den dør
+  boss: { name: 'Kæmpe-trold', hp: 500, armor: 3, speed: 0.45, bounty: 40, castleDamage: 5, damage: 15, interval: 1.5, color: '#7f1d1d', r: 0.6,
+          boss: true, splitEvery: 0.1, splitKinds: ['blue', 'blue', 'red'] },
   bat:  { name: 'Flagermus', hp: 18, armor: 0, speed: 1.3, bounty: 4, castleDamage: 1, damage: 2, interval: 1.0, color: '#a855f7', r: 0.22, move: 'fly' },
 };
 
@@ -91,6 +95,7 @@ function waveMonsters(n) {
     const j = Math.floor(Math.random() * (i + 1));
     [list[i], list[j]] = [list[j], list[i]];
   }
+  if (n === CONFIG.wavesPerLevel) list.push('boss');   // bossen kommer til sidst i sidste runde
   return list;
 }
 
@@ -742,16 +747,40 @@ function endWave() {
   if (income) say(`Gårdene gav ${income} guld.`);
 }
 
+// Monsterets liv i den nuværende runde (stiger pr. runde og efter banens hpGrowth).
+function waveHp(s) {
+  const w = state.map.waves, extra = Math.max(0, state.wave - w.same) * w.hpGrowth;
+  return Math.round(s.hp * (1 + CONFIG.monsterHpGrowth * (state.wave - 1) + extra));
+}
+
 function spawnMonster(kind) {
   const s = MONSTERS[kind];
   // kun fra indgangsfelter, hvorfra der er vej til borgen (et felt kan være hegnet inde)
   const open = state.map.spawns.filter(p => state.fields.monster[idx(p.x, p.y)] < Infinity);
   const list = open.length ? open : state.map.spawns;
   const sp = list[Math.floor(Math.random() * list.length)];
-  const w = state.map.waves, extra = Math.max(0, state.wave - w.same) * w.hpGrowth;
-  const hp = Math.round(s.hp * (1 + CONFIG.monsterHpGrowth * (state.wave - 1) + extra));
-  state.monsters.push({ kind, s, x: sp.x + 0.5, y: sp.y + 0.5, hp, maxHp: hp, cooldown: 0,
-                        wp: null, repath: 0, heldBy: null });
+  addMonster(kind, sp.x + 0.5, sp.y + 0.5);
+}
+
+function addMonster(kind, x, y) {
+  const s = MONSTERS[kind], hp = waveHp(s);
+  const m = { kind, s, x, y, hp, maxHp: hp, cooldown: 0, wp: null, repath: 0, heldBy: null };
+  if (s.boss) m.nextSplit = hp * (1 - s.splitEvery);
+  state.monsters.push(m);
+}
+
+// Bossen taber små monstre, efterhånden som den tager skade.
+function bossSplits(m) {
+  const s = m.s;
+  while (m.nextSplit > 0 && m.hp <= m.nextSplit) {
+    m.nextSplit -= m.maxHp * s.splitEvery;
+    s.splitKinds.forEach((kind, k) => {
+      const a = Math.random() * Math.PI * 2, r = 0.4 + 0.2 * k;
+      let x = m.x + Math.cos(a) * r, y = m.y + Math.sin(a) * r;
+      if (!walkableCell(Math.floor(x), Math.floor(y)) && !isCastle(Math.floor(x), Math.floor(y))) { x = m.x; y = m.y; }
+      addMonster(kind, x, y);
+    });
+  }
 }
 
 // ---------- opdatering ----------
@@ -771,6 +800,7 @@ function update(dt) {
 
   for (const b of state.buildings.values()) if (dataOf(b).tower) updateTower(b, dt);
   for (const m of state.monsters) if (m.hp > 0) updateMonster(m, dt);
+  for (const m of state.monsters.slice()) if (m.s.boss && !m.done) bossSplits(m);
 
   for (const m of state.monsters) if (m.hp <= 0 && !m.paid) { m.paid = true; if (!m.done) state.gold += m.s.bounty; }
   state.monsters = state.monsters.filter(m => m.hp > 0 && !m.done);
@@ -1576,9 +1606,10 @@ function draw() {
       ctx.fillStyle = m.s.color;
       ctx.beginPath(); ctx.moveTo(m.x * tile, m.y * tile - r); ctx.lineTo(m.x * tile + r * 1.4, m.y * tile);
       ctx.lineTo(m.x * tile, m.y * tile + r); ctx.lineTo(m.x * tile - r * 1.4, m.y * tile); ctx.closePath(); ctx.fill();
-    } else circle(m.x, m.y, m.s.r, m.s.color);
+    } else circle(m.x, m.y, m.s.r, m.s.color, m.s.boss ? '#000' : null);
+    if (m.s.boss) text('B', m.x * tile, m.y * tile, tile * 0.6, '#fecaca');
     if (m.frozen > 0) circle(m.x, m.y, m.s.r + 0.08, 'rgba(165,243,252,0.55)', '#0891b2');   // frosset: is omkring
-    if (m.hp < m.maxHp) hpBar(m.x, m.y, m.hp / m.maxHp);
+    if (m.hp < m.maxHp) hpBar(m.x, m.y, m.hp / m.maxHp, m.s.boss ? 0.85 : 0.55);
   }
 
   // magikere: lilla trekanter
@@ -1623,8 +1654,26 @@ function draw() {
   drawHud();
 }
 
+// Hvilke monstre der kommer i næste bølge, vist i byggefasen (antal pr. slags).
+let nextWaveKey = '';
+function drawNextWave() {
+  const el = $('nextWave'), show = state.phase === 'build';
+  el.hidden = !show;
+  if (!show) return;
+  const key = `${state.level}/${state.map.name}/${state.wave}`;
+  if (key === nextWaveKey) return;
+  nextWaveKey = key;
+  const counts = {};
+  for (const k of waveMonsters(state.wave)) counts[k] = (counts[k] || 0) + 1;
+  el.innerHTML = 'Næste bølge: ' + Object.keys(MONSTERS).filter(k => counts[k]).map(k => [k, counts[k]]).map(([k, n]) => {
+    const s = MONSTERS[k], shape = s.move === 'fly' ? '◆' : s.boss ? '⬤' : '●';
+    return `<span class="mon" title="${s.name}"><b style="color:${s.color}">${shape}</b> ${n} ${s.name}</span>`;
+  }).join('');
+}
+
 function drawHud() {
   const h = state.hero;
+  drawNextWave();
   $('sWave').textContent = `Runde ${state.wave}/${CONFIG.wavesPerLevel}`;
   $('sCastle').textContent = `Borg: ${state.lives}`;
   $('sGold').textContent = `Guld: ${state.gold}`;
