@@ -1397,6 +1397,66 @@ function drawWall(w, highlight) {
   if (hasHp(w) && w.hp < maxHp(w)) hpBar((x1 + x2) / 2, (y1 + y2) / 2, w.hp / maxHp(w), 0.3);
 }
 
+// ---------- slagskygger ----------
+// Lyset kommer fra øverst til venstre, så skyggen falder ned mod højre, længere jo højere
+// tingen er (i felter). Alle skygger tegnes helt sorte på et eget lag og lægges på med én
+// gennemsigtighed, så de har skarpe kanter og ikke bliver mørkere, hvor de overlapper.
+const SHADOW_ALPHA = 0.22, SHADOW_SLOPE = 0.6;
+const SHADOW_HEIGHT = { fence: 0.15, stone_wall: 0.3, tall_wall: 0.5, gate: 0.3, iron_gate: 0.35, net: 0,
+                        building: 0.35, tower: 0.55, castle: 0.7, unit: 0.15, hero: 0.2, flyer: 0.8 };
+const shadowCanvas = document.createElement('canvas');
+const sctx = shadowCanvas.getContext('2d');
+
+// Skygge af en kasse (x0,y0)-(x1,y1) i felter, der er h høj: kassen trukket ned mod højre.
+function boxShadow(x0, y0, x1, y1, h) {
+  const d = h * SHADOW_SLOPE * tile;
+  x0 *= tile; y0 *= tile; x1 *= tile; y1 *= tile;
+  sctx.beginPath();
+  sctx.moveTo(x0, y0); sctx.lineTo(x1, y0); sctx.lineTo(x1 + d, y0 + d);
+  sctx.lineTo(x1 + d, y1 + d); sctx.lineTo(x0 + d, y1 + d); sctx.lineTo(x0, y1);
+  sctx.closePath(); sctx.fill();
+}
+// Skygge af noget rundt, der svæver/står h over jorden: en ellipse flyttet ned mod højre.
+function blobShadow(x, y, r, h) {
+  const d = h * SHADOW_SLOPE;
+  sctx.beginPath(); sctx.ellipse((x + d) * tile, (y + d) * tile, r * tile, r * 0.7 * tile, 0, 0, Math.PI * 2); sctx.fill();
+}
+
+function drawShadows(dpr) {
+  if (shadowCanvas.width !== canvas.width || shadowCanvas.height !== canvas.height) {
+    shadowCanvas.width = canvas.width; shadowCanvas.height = canvas.height;
+  }
+  sctx.setTransform(1, 0, 0, 1, 0, 0);
+  sctx.clearRect(0, 0, shadowCanvas.width, shadowCanvas.height);
+  sctx.setTransform(dpr, 0, 0, dpr, -camX * dpr, -camY * dpr);
+  sctx.fillStyle = '#000';
+  for (const b of state.buildings.values()) {
+    const d = dataOf(b);
+    if (!d.blocks) continue;
+    const pad = 2 / tile;
+    boxShadow(b.x + pad, b.y + pad, b.x + 1 - pad, b.y + 1 - pad, d.tower ? SHADOW_HEIGHT.tower : SHADOW_HEIGHT.building);
+  }
+  for (const w of state.walls.values()) {
+    const d = dataOf(w), [x1, y1, x2, y2] = edgeLine(w.key), hw = d.width / 2;
+    boxShadow(Math.min(x1, x2) - hw, Math.min(y1, y2) - hw, Math.max(x1, x2) + hw, Math.max(y1, y2) + hw, SHADOW_HEIGHT[w.id] ?? 0.3);
+  }
+  const c = state.map.castle;
+  boxShadow(c.x, c.y, c.x + c.w, c.y + c.h, SHADOW_HEIGHT.castle);
+  for (const m of state.monsters) {
+    const fly = m.s.move === 'fly';
+    blobShadow(m.x, m.y + (fly ? 0 : m.s.r * 0.5), m.s.r * (fly ? 0.8 : 0.9), fly ? SHADOW_HEIGHT.flyer : SHADOW_HEIGHT.unit);
+  }
+  for (const s of state.soldiers) if (s.alive) blobShadow(s.x, s.y + 0.1, 0.22, SHADOW_HEIGHT.unit);
+  for (const w of state.wizards) if (w.alive) blobShadow(w.x, w.y + 0.12, 0.25, SHADOW_HEIGHT.unit);
+  const h = state.hero;
+  if (h.alive) blobShadow(h.x, h.y + 0.2, 0.38, SHADOW_HEIGHT.hero);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = SHADOW_ALPHA;
+  ctx.drawImage(shadowCanvas, 0, 0);
+  ctx.restore();
+}
+
 function draw() {
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1420,7 +1480,9 @@ function draw() {
         ctx.quadraticCurveTo((x + 0.65) * tile, (y + fy + 0.1) * tile, (x + 0.8) * tile, (y + fy) * tile);
       }
       ctx.stroke();
-    } else if (t === T_ROCK) {   // en sten
+    } else if (t === T_ROCK) {   // en sten med sin egen lille slagskygge
+      ctx.fillStyle = `rgba(0,0,0,${SHADOW_ALPHA})`;
+      ctx.beginPath(); ctx.ellipse((x + 0.62) * tile, (y + 0.67) * tile, tile * 0.32, tile * 0.24, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#7d776c';
       ctx.beginPath(); ctx.ellipse((x + 0.5) * tile, (y + 0.55) * tile, tile * 0.32, tile * 0.24, 0, 0, Math.PI * 2); ctx.fill();
     }
@@ -1445,6 +1507,8 @@ function draw() {
       ctx.beginPath(); ctx.arc(p.x * tile, p.y * tile, tile * 0.08, 0, Math.PI * 2); ctx.fill();
     }
   }
+
+  drawShadows(dpr);
 
   // bygninger i felter
   for (const b of state.buildings.values()) {
