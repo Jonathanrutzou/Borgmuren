@@ -708,7 +708,7 @@ function startWave() {
 function endWave() {
   state.shots = [];
   state.rallyFor = null;
-  let income = 0;   // gårde, der blev smadret i bølgen, giver ikke guld
+  let income = 0;   // gårde, der blev smadret i bølgen, er væk og giver ikke guld
   for (const b of state.buildings.values()) income += dataOf(b).income || 0;
   state.gold += income;
   for (const b of state.destroyed) {   // smadrede bygninger kommer tilbage med fuldt liv
@@ -1060,7 +1060,8 @@ function smash(m, o) {
   m.cooldown = m.s.interval;
   o.hp -= m.s.damage;
   if (o.hp <= 0) {
-    if (!isWall(o)) state.destroyed.push(o);   // bygninger kommer tilbage efter bølgen (porte gør ikke)
+    // bygninger kommer tilbage efter bølgen; porte og gårde (pengebygninger) gør ikke
+    if (!isWall(o) && !dataOf(o).income) state.destroyed.push(o);
     removeBuilding(o);
   }
 }
