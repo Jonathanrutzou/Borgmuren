@@ -2,7 +2,7 @@
 //   .  græs (der kan bygges)       ~  vand (ingen kan gå, der kan ikke bygges; flagermus flyver over)
 //   #  sten (ingen kan gå, der kan ikke bygges)
 //   S  her kommer monstrene ind (der kan ikke bygges)      C  borgen (et rektangel)
-// waves: runderne er de samme som bane 1 til og med runde 'same'; derefter kommer der
+// waves: 'count' er antal runder (standard 10). Runderne er de samme som bane 1 til og med runde 'same'; derefter kommer der
 //        'growth' flere monstre pr. runde (fx 0.06 = 6 procent) og 'hpGrowth' mere liv pr. runde.
 //        'total' giver enkelte runder et fast antal monstre i alt, fx { 10: 200 }.
 // Banerne kan laves i baneeditoren (editor.html) eller ud fra en tegning (tools/png_to_level.py).
@@ -58,7 +58,7 @@ const LEVELS = [
       "S...............~~....~~~~~.........",
       "S...............~~..................",
     ] },
-  { name: 'Bane 3', waves: { same: 10, growth: 0.06, hpGrowth: 0.02 },
+  { name: 'Bane 3', waves: { count: 20, same: 10, growth: 0.06, hpGrowth: 0.02 },
     map: [
       "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
       "...............................~~~~~",
@@ -81,7 +81,7 @@ const LEVELS = [
       "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
       "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
     ] },
-  { name: 'Bane 4', waves: { same: 10, growth: 0.06, hpGrowth: 0.02 },
+  { name: 'Bane 4', waves: { count: 20, same: 10, growth: 0.06, hpGrowth: 0.02 },
     map: [
       "S......~............",
       "S.....~~~...........",
@@ -104,7 +104,7 @@ const LEVELS = [
       "S......~~...........",
       "S...................",
     ] },
-  { name: 'Bane 5', waves: { same: 2, growth: 0.2, hpGrowth: 0.02 },
+  { name: 'Bane 5', waves: { count: 20, same: 2, growth: 0.2, hpGrowth: 0.02 },
     map: [
       "S................................CCC",
       "S................................CCC",
@@ -112,5 +112,14 @@ const LEVELS = [
       "S................................CCC",
       "S................................CCC",
       "S................................CCC",
+    ] },
+  { name: 'Bane 6', waves: { count: 20, same: 2, growth: 0.2, hpGrowth: 0.02 },
+    map: [
+      "S....~....~~~~...........~....~....S",
+      "...........~~~....~~~....~..........",
+      ".....~............CC~....~..........",
+      "..................CC~...............",
+      ".....~...........~~~~....~..........",
+      "S........................~...~~~...S",
     ] },
 ];

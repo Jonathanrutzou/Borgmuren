@@ -8,7 +8,8 @@ let COLS = 32, ROWS = 24;            // banens størrelse; sættes af banen (ban
 const CONFIG = {
   startGold: 180,
   castleLives: 20,
-  wavesPerLevel: 10,       // bane 1 består af 10 runder
+  wavesPerLevel: 10,       // runder pr. bane, hvis banen ikke selv siger andet (waves.count)
+  freezeImmuneSec: 1,      // så længe er et monster immunt over for frysning, når det er tøet op
   // knight.tres (farten er fordoblet)
   // bow i knight.tres: -3 skade, rækker 4 felter, 10 % hurtigere, rammer flagermus, holder ingen fast
   bow: { damageBonus: -3, range: 4.0, intervalFactor: 0.9 },
@@ -42,6 +43,17 @@ const MONSTERS = {
   // har mistet 10 % af sit liv (splitEvery), og resten, når den dør
   boss: { name: 'Kæmpe-trold', hp: 500, armor: 3, speed: 0.45, bounty: 40, castleDamage: 5, damage: 15, interval: 1.5, color: '#7f1d1d', r: 0.6,
           boss: true, breaksFences: true, splitEvery: 0.1, splitKinds: ['blue', 'blue', 'red'] },
+  // mini-boss hver 5. runde
+  miniboss: { name: 'Trold-høvding', hp: 200, armor: 2, speed: 0.6, bounty: 15, castleDamage: 3, damage: 10, interval: 1.2, color: '#9a3412', r: 0.45, mini: true },
+  // nye monstre efter runde 10
+  wolf:   { name: 'Ulv', hp: 30, armor: 0, speed: 2.6, bounty: 3, castleDamage: 1, damage: 4, interval: 0.8, color: '#64748b', r: 0.24 },
+  shield: { name: 'Skjoldtrold', hp: 80, armor: 6, speed: 0.7, bounty: 6, castleDamage: 1, damage: 8, interval: 1.2, color: '#334155', r: 0.34 },
+  shaman: { name: 'Shaman', hp: 50, armor: 1, speed: 0.9, bounty: 8, castleDamage: 1, damage: 3, interval: 1.0, color: '#0d9488', r: 0.27,
+            heal: 6, healRadius: 2 },   // heler andre monstre 6 liv/sek. inden for 2 felter
+  slime:  { name: 'Slim', hp: 60, armor: 0, speed: 0.8, bounty: 4, castleDamage: 1, damage: 4, interval: 1.0, color: '#ca8a04', r: 0.3,
+            splitInto: ['slimelet', 'slimelet'] },   // deler sig i to små, når den dør
+  slimelet: { name: 'Lille slim', hp: 20, armor: 0, speed: 1.2, bounty: 1, castleDamage: 1, damage: 2, interval: 1.0, color: '#eab308', r: 0.2 },
+  dragon: { name: 'Drage', hp: 120, armor: 3, speed: 0.9, bounty: 10, castleDamage: 2, damage: 6, interval: 1.0, color: '#be123c', r: 0.35, move: 'fly' },
   bat:  { name: 'Flagermus', hp: 18, armor: 0, speed: 1.3, bounty: 4, castleDamage: 1, damage: 2, interval: 1.0, color: '#a855f7', r: 0.22, move: 'fly' },
 };
 
@@ -89,6 +101,13 @@ const SOLDIER_SPEED = 1.5;
 function waveMonsters(n) {
   const list = [];
   const count = { blue: 4 + 4 * n, red: n >= 2 ? 4 * n : 0, lizard: n >= 3 ? 2 * n : 0, bat: n >= 4 ? 2 * n : 0 };
+  // efter runde 10 (på baner med 20 runder) kommer der nye, sværere monstre til, ét nyt pr. runde
+  const k = n - 10;
+  if (k >= 1) count.wolf = 3 * k;
+  if (k >= 2) count.shield = 2 * k;
+  if (k >= 3) count.shaman = k;
+  if (k >= 4) count.slime = 2 * k;
+  if (k >= 5) count.dragon = k;
   let factor = 1 + Math.max(0, n - state.map.waves.same) * state.map.waves.growth;
   const fixed = state.map.waves.total[n];
   if (fixed) factor *= fixed / Object.values(count).reduce((a, b) => a + b, 0);
@@ -97,7 +116,8 @@ function waveMonsters(n) {
     const j = Math.floor(Math.random() * (i + 1));
     [list[i], list[j]] = [list[j], list[i]];
   }
-  if (n === CONFIG.wavesPerLevel) list.push('boss');   // bossen kommer til sidst i sidste runde
+  if (n === state.map.waves.count) list.push('boss');   // bossen kommer til sidst i sidste runde
+  else if (n % 5 === 0) list.push('miniboss');           // og en mini-boss hver 5. runde
   return list;
 }
 
@@ -150,7 +170,7 @@ function parseLevel(level) {
   if (w.total && typeof w.total === 'object') {
     for (const [k, v] of Object.entries(w.total)) if (Number(k) >= 1 && Number.isFinite(v)) total[Number(k)] = num(v, 1, 1000, 1);
   }
-  const waves = { same: num(w.same, 0, 99, CONFIG.wavesPerLevel), growth: num(w.growth, 0, 1, 0), hpGrowth: num(w.hpGrowth, 0, 1, 0), total };
+  const waves = { count: Math.round(num(w.count, 1, 50, CONFIG.wavesPerLevel)), same: num(w.same, 0, 99, CONFIG.wavesPerLevel), growth: num(w.growth, 0, 1, 0), hpGrowth: num(w.hpGrowth, 0, 1, 0), total };
   // helten starter i et frit felt op ad borgen, så tæt på banens midte som muligt
   let hero = null, hd = Infinity;
   for (let y = castle.y - 1; y <= castle.y + castle.h; y++) for (let x = castle.x - 1; x <= castle.x + castle.w; x++) {
@@ -748,7 +768,7 @@ function endWave() {
     if (!s.alive) { s.x = s.post.x; s.y = s.post.y; }
     s.alive = true; s.hp = s.stats.hp; s.opponent = null; s.path = []; s.idle = false;
   }
-  if (state.wave >= CONFIG.wavesPerLevel) { state.phase = 'won'; return; }
+  if (state.wave >= state.map.waves.count) { state.phase = 'won'; return; }
   state.phase = 'build';
   state.wave++;
   if (income) say(`Gårdene gav ${income} guld.`);
@@ -809,7 +829,17 @@ function update(dt) {
   for (const m of state.monsters) if (m.hp > 0) updateMonster(m, dt);
   for (const m of state.monsters.slice()) if (m.s.boss && !m.done) bossSplits(m);
 
-  for (const m of state.monsters) if (m.hp <= 0 && !m.paid) { m.paid = true; if (!m.done) state.gold += m.s.bounty; }
+  for (const m of state.monsters) if (m.s.heal && m.hp > 0 && !m.done) {   // shamaner heler monstrene omkring sig
+    for (const o of state.monsters) {
+      if (o !== m && o.hp > 0 && dist(o, m) <= m.s.healRadius) o.hp = Math.min(o.maxHp, o.hp + m.s.heal * dt);
+    }
+  }
+  for (const m of state.monsters.slice()) if (m.hp <= 0 && !m.paid) {
+    m.paid = true;
+    if (m.done) continue;
+    state.gold += m.s.bounty;
+    if (m.s.splitInto) m.s.splitInto.forEach((kind, i) => addMonster(kind, m.x + (i ? 0.2 : -0.2), m.y));   // slim deler sig
+  }
   state.monsters = state.monsters.filter(m => m.hp > 0 && !m.done);
   for (const sh of state.shots) sh.t -= dt;
   for (const e of state.effects) e.t += dt;
@@ -1041,14 +1071,14 @@ function updateTower(b, dt) {
   const c = center(b.x, b.y);
   const canHit = m => !t.ground || m.s.move !== 'fly';   // kanoner og frysetårne rammer ikke flyvende
   // frysetårne sigter helst på monstre, der ikke allerede er frosne
-  const target = (t.freeze && nearestMonster(c, t.range, m => canHit(m) && !(m.frozen > 0))) || nearestMonster(c, t.range, canHit);
+  const target = (t.freeze && nearestMonster(c, t.range, m => canHit(m) && !(m.frozen > 0) && !(m.freezeImmune > 0))) || nearestMonster(c, t.range, canHit);
   if (!target) return;
   b.cooldown = t.interval;
   const dmg = Math.round(t.damage * towerBoost(b));
   const hit = m => {
     const d = t.shatter && m.frozen > 0 ? dmg * t.shatter : dmg;   // kanoner knuser frosne monstre (dobbelt skade)
     m.hp -= t.magic ? d : physical(d, m.s.armor);
-    if (t.freeze) m.frozen = Math.max(m.frozen || 0, t.freeze);
+    if (t.freeze && !(m.freezeImmune > 0)) m.frozen = Math.max(m.frozen || 0, t.freeze);
   };
   if (t.splash) { for (const m of state.monsters) if (m.hp > 0 && canHit(m) && dist(m, target) <= t.splash) hit(m); }
   else hit(target);
@@ -1098,7 +1128,12 @@ function monsterWaypoint(m) {
 function updateMonster(m, dt) {
   const s = m.s;
   if (m.push) { pushMonster(m, dt); m.repath = 0; return; }   // skubbet af heltens hop
-  if (m.frozen > 0) { m.frozen -= dt; return; }   // frosset: står helt stille og slår ikke
+  if (m.frozen > 0) {   // frosset: står helt stille og slår ikke; immun et øjeblik, når det tør op
+    m.frozen -= dt;
+    if (m.frozen <= 0) m.freezeImmune = CONFIG.freezeImmuneSec;
+    return;
+  }
+  if (m.freezeImmune > 0) m.freezeImmune -= dt;
   m.cooldown = Math.max(0, m.cooldown - dt);
   const h = state.hero;
 
@@ -1659,8 +1694,9 @@ function draw() {
       ctx.fillStyle = m.s.color;
       ctx.beginPath(); ctx.moveTo(m.x * tile, m.y * tile - r); ctx.lineTo(m.x * tile + r * 1.4, m.y * tile);
       ctx.lineTo(m.x * tile, m.y * tile + r); ctx.lineTo(m.x * tile - r * 1.4, m.y * tile); ctx.closePath(); ctx.fill();
-    } else circle(m.x, m.y, m.s.r, m.s.color, m.s.boss ? '#000' : null);
-    if (m.s.boss) text('B', m.x * tile, m.y * tile, tile * 0.6, '#fecaca');
+    } else circle(m.x, m.y, m.s.r, m.s.color, m.s.boss || m.s.mini || m.s.armor >= 6 ? '#000' : null);
+    if (m.s.boss || m.s.mini) text(m.s.boss ? 'B' : 'b', m.x * tile, m.y * tile, tile * (m.s.boss ? 0.6 : 0.45), '#fecaca');
+    if (m.s.heal) text('+', m.x * tile, m.y * tile, tile * 0.4, '#fff');
     if (m.frozen > 0) circle(m.x, m.y, m.s.r + 0.08, 'rgba(165,243,252,0.55)', '#0891b2');   // frosset: is omkring
     if (m.hp < m.maxHp) hpBar(m.x, m.y, m.hp / m.maxHp, m.s.boss ? 0.85 : 0.55);
   }
@@ -1738,7 +1774,7 @@ function drawNextWave() {
 function drawHud() {
   const h = state.hero;
   drawNextWave();
-  $('sWave').textContent = `Runde ${state.wave}/${CONFIG.wavesPerLevel}`;
+  $('sWave').textContent = `Runde ${state.wave}/${state.map.waves.count}`;
   $('sCastle').textContent = `Borg: ${state.lives}`;
   $('sGold').textContent = `Guld: ${state.gold}`;
   $('sHero').textContent = h.alive ? `Helt: ${Math.max(0, Math.ceil(h.hp))}/${heroMax()}` : `Helt: tilbage om ${Math.ceil(h.respawn)} s`;
