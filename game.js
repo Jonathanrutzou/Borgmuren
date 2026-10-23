@@ -29,7 +29,7 @@ const CONFIG = {
   starLives: [18, 10],      // borgens liv tilbage for 3 og 2 stjerner (ellers 1)
   spawnIntervalSec: 1.2,
   waveArrivalSec: { 9: 40, 10: 40 },   // runder, hvor alle monstre skal nå at komme på så mange sekunder
-  monsterHpGrowth: 0.15,   // +15 % liv pr. bølge
+  monsterHpGrowth: 0.15,   // +15 % liv pr. bølge, oven i den forrige (runde 10: 3,5×, runde 20: 14×)
 };
 
 // grunt.tres og runner.tres
@@ -777,7 +777,7 @@ function endWave() {
 // Monsterets liv i den nuværende runde (stiger pr. runde og efter banens hpGrowth).
 function waveHp(s) {
   const w = state.map.waves, extra = Math.max(0, state.wave - w.same) * w.hpGrowth;
-  return Math.round(s.hp * (1 + CONFIG.monsterHpGrowth * (state.wave - 1) + extra));
+  return Math.round(s.hp * Math.pow(1 + CONFIG.monsterHpGrowth, state.wave - 1) * (1 + extra));
 }
 
 function spawnMonster(kind) {
@@ -1762,7 +1762,7 @@ function drawNextWave() {
   for (const k of waveMonsters(state.wave)) counts[k] = (counts[k] || 0) + 1;
   el.innerHTML = 'Næste bølge: ' + Object.keys(MONSTERS).filter(k => counts[k]).map(k => [k, counts[k]]).map(([k, n]) => {
     const s = MONSTERS[k], shape = s.move === 'fly' ? '◆' : s.boss ? '⬤' : '●';
-    return `<span class="mon" title="${s.name}"><b style="color:${s.color}">${shape}</b> ${n} ${s.name}</span>`;
+    return `<span class="mon" title="${s.name}"><b style="color:${s.color}">${shape}</b> ${n} ${s.name} <small>(${waveHp(s)} liv)</small></span>`;
   }).join('');
 }
 
