@@ -1206,12 +1206,7 @@ function smash(m, o) {
   if (m.cooldown > 0) return;
   m.cooldown = m.s.interval;
   o.hp -= m.s.damage;
-  if (o.hp <= 0) {
-    // bygninger kommer tilbage efter bølgen; porte, gårde og magertårne gør ikke
-    const d = dataOf(o);
-    if (!isWall(o) && !d.income && !(d.tower && d.tower.magic)) state.destroyed.push(o);   // gårde og magertårne heller ikke
-    removeBuilding(o);
-  }
+  if (o.hp <= 0) removeBuilding(o);   // smadrede bygninger kommer ikke tilbage
 }
 
 // Felter, hvorfra et monster kan slå bygningen b: et frit nabofelt lige op ad en af dens
