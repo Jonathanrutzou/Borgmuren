@@ -9,11 +9,11 @@ const CONFIG = {
   startGold: 180,
   castleLives: 20,
   wavesPerLevel: 10,       // runder pr. bane, hvis banen ikke selv siger andet (waves.count)
-  freezeImmuneSec: 1,
+  freezeImmuneSec: 1,      // så længe er et monster immunt over for frysning, når det er tøet op
   // heltens erfaring: monstre, helten selv dræber, giver xpPerGold × guld i XP. Niveau n → n+1 kræver
   // xpBase + xpStep × n. Hvert niveau giver +2 % skade og +2 % liv. Højst niveau 100.
   heroXp: { perGold: 2, base: 10, step: 4, maxLevel: 100, bonusPerLevel: 0.02 },
-  roundExtra: { 5: 1.4, 6: 1.4, 7: 1.4, 8: 1.4 },   // runde 5-8 har 40 % flere monstre (de var for nemme)      // så længe er et monster immunt over for frysning, når det er tøet op
+  roundExtra: { 5: 1.4, 6: 1.4, 7: 1.4, 8: 1.4 },   // runde 5-8 har 40 % flere monstre (de var for nemme)
   // knight.tres (farten er fordoblet)
   // bow i knight.tres: -3 skade, rækker 4 felter, 10 % hurtigere, rammer flagermus, holder ingen fast
   bow: { damageBonus: -3, range: 4.0, intervalFactor: 0.9 },
