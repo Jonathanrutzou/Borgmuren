@@ -10,6 +10,9 @@ const CONFIG = {
   castleLives: 20,
   wavesPerLevel: 10,       // runder pr. bane, hvis banen ikke selv siger andet (waves.count)
   freezeImmuneSec: 1,
+  // heltens erfaring: monstre, helten selv dræber, giver xpPerGold × guld i XP. Niveau n → n+1 kræver
+  // xpBase + xpStep × n. Hvert niveau giver +2 % skade og +2 % liv. Højst niveau 100.
+  heroXp: { perGold: 2, base: 10, step: 4, maxLevel: 100, bonusPerLevel: 0.02 },
   roundExtra: { 5: 1.4, 6: 1.4, 7: 1.4, 8: 1.4 },   // runde 5-8 har 40 % flere monstre (de var for nemme)      // så længe er et monster immunt over for frysning, når det er tøet op
   // knight.tres (farten er fordoblet)
   // bow i knight.tres: -3 skade, rækker 4 felter, 10 % hurtigere, rammer flagermus, holder ingen fast
@@ -236,6 +239,7 @@ function newGame(map = parseLevel(LEVELS[0])) {
     heroLv: { attack: 0, damage: 0, hp: 0, move: 0 },
     weapon: 'sword',        // 'sword' | 'bow' (buen købes for stjerner)
     jumpCooldown: 0,        // sekunder til helten kan hoppe igen
+    heroLevel: 1, heroXp: 0,   // heltens niveau og erfaring på denne bane
     effects: [],            // chokbølger fra heltens hop
     monsters: [],
     soldiers: [],
@@ -259,8 +263,25 @@ function newGame(map = parseLevel(LEVELS[0])) {
 }
 
 const heroLv = k => state.heroLv[k];
-const heroMax = () => CONFIG.hero.hp + heroLv('hp') * HERO_UPGRADES.hp.per;
-const heroDamage = () => CONFIG.hero.damage + heroLv('damage') * HERO_UPGRADES.damage.per;
+const levelBonus = () => 1 + CONFIG.heroXp.bonusPerLevel * ((state.heroLevel || 1) - 1);
+const heroMax = () => Math.round((CONFIG.hero.hp + heroLv('hp') * HERO_UPGRADES.hp.per) * levelBonus());
+const heroDamage = () => Math.round((CONFIG.hero.damage + heroLv('damage') * HERO_UPGRADES.damage.per) * levelBonus());
+const xpToNext = () => CONFIG.heroXp.base + CONFIG.heroXp.step * state.heroLevel;
+
+// Helten får erfaring for de monstre, han selv dræber, og stiger i niveau.
+function gainXp(xp) {
+  const cfg = CONFIG.heroXp, h = state.hero;
+  if (state.heroLevel >= cfg.maxLevel) return;
+  state.heroXp += xp;
+  while (state.heroLevel < cfg.maxLevel && state.heroXp >= xpToNext()) {
+    state.heroXp -= xpToNext();
+    const before = heroMax();
+    state.heroLevel++;
+    if (h.alive) h.hp += heroMax() - before;
+    state.effects.push({ x: h.x, y: h.y, t: 0, dur: 1.2, text: `Niveau ${state.heroLevel}!` });
+  }
+  if (state.heroLevel >= cfg.maxLevel) state.heroXp = 0;
+}
 const heroInterval = () => CONFIG.hero.attackInterval * Math.pow(1 - HERO_UPGRADES.attack.per, heroLv('attack'));
 const heroSpeed = () => CONFIG.hero.speed + heroLv('move') * HERO_UPGRADES.move.per;
 const heroUpgradeCost = k => Math.round(HERO_UPGRADES[k].cost + HERO_UPGRADES[k].step * heroLv(k));
@@ -841,6 +862,7 @@ function update(dt) {
     m.paid = true;
     if (m.done) continue;
     state.gold += m.s.bounty;
+    if (m.lastHit === 'hero') gainXp(m.s.bounty * CONFIG.heroXp.perGold);
     if (m.s.splitInto) m.s.splitInto.forEach((kind, i) => addMonster(kind, m.x + (i ? 0.2 : -0.2), m.y));   // slim deler sig
   }
   state.monsters = state.monsters.filter(m => m.hp > 0 && !m.done);
@@ -891,7 +913,7 @@ function updateHero(dt) {
     const t = nearestMonster(h, CONFIG.bow.range);
     if (t && h.cooldown <= 0) {
       h.cooldown = heroInterval() * CONFIG.bow.intervalFactor;
-      t.hp -= physical(heroDamage() + CONFIG.bow.damageBonus, t.s.armor);
+      t.hp -= physical(heroDamage() + CONFIG.bow.damageBonus, t.s.armor); t.lastHit = 'hero';
       state.shots.push({ x1: h.x, y1: h.y, x2: t.x, y2: t.y, t: 0.12, color: '#15803d' });
     }
     return;
@@ -905,7 +927,7 @@ function updateHero(dt) {
   }
   if (h.opponent && h.cooldown <= 0) {
     h.cooldown = heroInterval();
-    h.opponent.hp -= physical(heroDamage(), h.opponent.s.armor);
+    h.opponent.hp -= physical(heroDamage(), h.opponent.s.armor); h.opponent.lastHit = 'hero';
     state.shots.push({ x1: h.x, y1: h.y, x2: h.opponent.x, y2: h.opponent.y, t: 0.1, color: '#16a34a' });
   }
 }
@@ -926,7 +948,7 @@ function landJump(h) {
     if (m.hp <= 0 || m.done || m.s.move === 'fly') continue;
     const d = dist(h, m);
     if (d > cfg.radius) continue;
-    m.hp -= physical(cfg.damage, m.s.armor);
+    m.hp -= physical(cfg.damage, m.s.armor); m.lastHit = 'hero';
     const a = d > 0.01 ? Math.atan2(m.y - h.y, m.x - h.x) : Math.random() * Math.PI * 2;
     m.push = { dx: Math.cos(a), dy: Math.sin(a), left: cfg.push };
     m.heldBy = null; m.climbTo = null; m.wp = null;
@@ -1722,6 +1744,12 @@ function draw() {
   // chokbølger fra hoppet: en ring, der vokser og falmer
   for (const e of state.effects) {
     const f = e.t / e.dur;
+    if (e.text) {   // tekst, der stiger op og falmer (fx nyt niveau)
+      ctx.globalAlpha = 1 - f;
+      text(e.text, e.x * tile, (e.y - 0.8 - f * 1.2) * tile, tile * 0.55, '#15803d');
+      ctx.globalAlpha = 1;
+      continue;
+    }
     ctx.strokeStyle = `rgba(22,101,52,${1 - f})`; ctx.lineWidth = Math.max(2, tile * 0.18 * (1 - f));
     ctx.beginPath(); ctx.arc(e.x * tile, e.y * tile, e.r * tile * (0.3 + 0.7 * f), 0, Math.PI * 2); ctx.stroke();
     ctx.fillStyle = `rgba(134,239,172,${0.25 * (1 - f)})`; ctx.fill();
@@ -1775,7 +1803,8 @@ function drawHud() {
   $('sWave').textContent = `Runde ${state.wave}/${state.map.waves.count}`;
   $('sCastle').textContent = `Borg: ${state.lives}`;
   $('sGold').textContent = `Guld: ${state.gold}`;
-  $('sHero').textContent = h.alive ? `Helt: ${Math.max(0, Math.ceil(h.hp))}/${heroMax()}` : `Helt: tilbage om ${Math.ceil(h.respawn)} s`;
+  const lv = `niv. ${state.heroLevel}` + (state.heroLevel < CONFIG.heroXp.maxLevel ? ` (${state.heroXp}/${xpToNext()} XP)` : '');
+  $('sHero').textContent = h.alive ? `Helt ${lv}: ${Math.max(0, Math.ceil(h.hp))}/${heroMax()}` : `Helt ${lv}: tilbage om ${Math.ceil(h.respawn)} s`;
   const building = state.phase === 'build';
   $('bStart').disabled = !building;
   $('bBuild').disabled = !building;
