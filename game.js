@@ -31,8 +31,11 @@ const CONFIG = {
   climbSpeed: 0.35,        // øglen kravler med 35 % af sin fart
   sellRatio: 0.6,          // ældre bygninger sælges for 60 %; nye i samme byggefase for fuld pris
   starLives: [18, 10],      // borgens liv tilbage for 3 og 2 stjerner (ellers 1)
-  spawnIntervalSec: 1.2,
-  waveArrivalSec: { 9: 40, 10: 40 },   // runder, hvor alle monstre skal nå at komme på så mange sekunder
+  // Runderne holdes korte: højst maxPerRound monstre pr. runde. Giver formlen flere, får hvert
+  // monster tilsvarende mere liv, så den samlede mængde liv er den samme. Monstrene kommer i
+  // grupper på groupSize, tæt efter hinanden (groupSpawnSec); næste gruppe kommer, når der er
+  // højst groupNextAt monstre tilbage, eller efter groupWaitSec.
+  maxPerRound: 200, groupSize: 50, groupSpawnSec: 0.2, groupNextAt: 10, groupWaitSec: 15,
   monsterHpGrowth: 0.15,   // +15 % liv pr. bølge, oven i den forrige (runde 10: 3,5×, runde 20: 14×)
 };
 
@@ -119,6 +122,12 @@ function waveMonsters(n) {
   for (let i = list.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [list[i], list[j]] = [list[j], list[i]];
+  }
+  // loft over antal: resten bliver til ekstra liv (bosserne tæller ikke med)
+  list.hpScale = 1;
+  if (list.length > CONFIG.maxPerRound) {
+    list.hpScale = list.length / CONFIG.maxPerRound;
+    list.length = CONFIG.maxPerRound;
   }
   if (n === state.map.waves.count) list.push('boss');   // bossen kommer til sidst i sidste runde
   else if (n % 5 === 0) {   // og en mini-boss hver 5. runde, der kommer tidligt sammen med de andre
@@ -755,9 +764,9 @@ function startWave() {
   state.selected = null;
   state.buildOpen = false;
   state.spawnQueue = waveMonsters(state.wave);
+  state.waveHpScale = state.spawnQueue.hpScale || 1;
   state.spawnTimer = 0;
-  const arrive = CONFIG.waveArrivalSec[state.wave];
-  state.spawnInterval = arrive ? arrive / state.spawnQueue.length : CONFIG.spawnIntervalSec;
+  state.groupLeft = CONFIG.groupSize; state.groupWait = 0;
   for (const b of state.buildings.values()) b.fresh = false;
   for (const w of state.walls.values()) w.fresh = false;
   recomputeField();
@@ -799,9 +808,10 @@ function endWave() {
 }
 
 // Monsterets liv i den nuværende runde (stiger pr. runde og efter banens hpGrowth).
-function waveHp(s) {
+function waveHp(s, scale = state.waveHpScale || 1) {
   const w = state.map.waves, extra = Math.max(0, state.wave - w.same) * w.hpGrowth;
-  return Math.round(s.hp * Math.pow(1 + CONFIG.monsterHpGrowth, state.wave - 1) * (1 + extra));
+  const pool = s.boss || s.mini ? 1 : scale;   // bosserne får ikke ekstra liv fra loftet
+  return Math.round(s.hp * Math.pow(1 + CONFIG.monsterHpGrowth, state.wave - 1) * (1 + extra) * pool);
 }
 
 function spawnMonster(kind) {
@@ -843,10 +853,19 @@ function update(dt) {
   for (const w of state.wizards) updateWizard(w, dt);
   if (state.phase !== 'wave') return;
 
+  // monstrene kommer i grupper: tæt efter hinanden, og næste gruppe, når banen er ved at være tom
   state.spawnTimer -= dt;
-  if (state.spawnQueue.length && state.spawnTimer <= 0) {
-    spawnMonster(state.spawnQueue.shift());
-    state.spawnTimer = state.spawnInterval;
+  if (state.spawnQueue.length) {
+    if (state.groupLeft <= 0) {
+      state.groupWait += dt;
+      if (state.monsters.length <= CONFIG.groupNextAt || state.groupWait >= CONFIG.groupWaitSec) {
+        state.groupLeft = CONFIG.groupSize; state.groupWait = 0; state.spawnTimer = 0;
+      }
+    } else if (state.spawnTimer <= 0) {
+      spawnMonster(state.spawnQueue.shift());
+      state.groupLeft--;
+      state.spawnTimer = CONFIG.groupSpawnSec;
+    }
   }
 
   for (const b of state.buildings.values()) if (dataOf(b).tower) updateTower(b, dt);
@@ -1789,11 +1808,11 @@ function drawNextWave() {
   const key = `${state.level}/${state.map.name}/${state.wave}`;
   if (key === nextWaveKey) return;
   nextWaveKey = key;
-  const counts = {};
-  for (const k of waveMonsters(state.wave)) counts[k] = (counts[k] || 0) + 1;
+  const counts = {}, next = waveMonsters(state.wave);
+  for (const k of next) counts[k] = (counts[k] || 0) + 1;
   el.innerHTML = 'Næste bølge: ' + Object.keys(MONSTERS).filter(k => counts[k]).map(k => [k, counts[k]]).map(([k, n]) => {
     const s = MONSTERS[k], shape = s.move === 'fly' ? '◆' : s.boss ? '⬤' : '●';
-    return `<span class="mon" title="${s.name}"><b style="color:${s.color}">${shape}</b> ${n} ${s.name} <small>(${waveHp(s)} liv)</small></span>`;
+    return `<span class="mon" title="${s.name}"><b style="color:${s.color}">${shape}</b> ${n} ${s.name} <small>(${waveHp(s, next.hpScale)} liv)</small></span>`;
   }).join('');
 }
 
