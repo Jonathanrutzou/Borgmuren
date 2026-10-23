@@ -19,6 +19,16 @@ const CONFIG = {
   bow: { damageBonus: -3, range: 4.0, intervalFactor: 0.9 },
   // heltens hop: lander efter airSec, skader monstre inden for radius og skubber dem push felter væk
   jump: { cooldownSec: 12, airSec: 0.55, radius: 2.0, push: 3, damage: 25, pushSpeed: 12 },
+  // evner købt for stjerner (knapper i toppen under bølgen). Ventetiden nulstilles efter hver bølge.
+  // Kampråb: +50 % skade til helt og soldater. Hvirvelvind: helten snurrer og skader alt tæt på
+  // (dpsFactor × heltens skade pr. sek.). Lynnedslag: magisk skade et sted man trykker (også flyvende).
+  // Ildmur: en mur af ild på tværs af monstrenes vej, som brænder monstre på jorden.
+  abilities: {
+    warcry: { cooldownSec: 25, durationSec: 6, bonus: 0.5 },
+    whirl: { cooldownSec: 20, durationSec: 3, radius: 1.4, dpsFactor: 2 },
+    lightning: { cooldownSec: 25, radius: 1.5, damage: 120 },
+    firewall: { cooldownSec: 30, durationSec: 5, length: 3, dps: 30 },
+  },
   // magikeren købes i et magertårn: angriber altid monsteret nærmest tårnet, går lige så hurtigt
   // som helten, rækker 6 felter, slår hurtigt med område-skade (magi, også flagermus), men svagt
   wizard: { cost: 80, damage: 5, interval: 0.5, range: 6, splash: 0.8, hp: 80, armor: 0, respawnSec: 10 },
@@ -294,6 +304,9 @@ function newGame(map = parseLevel(LEVELS[0])) {
     heroLv: { attack: 0, damage: 0, hp: 0, move: 0 },
     weapon: 'sword',        // 'sword' | 'bow' (buen købes for stjerner)
     jumpCooldown: 0,        // sekunder til helten kan hoppe igen
+    abilityCd: {},          // evne -> sekunder til den kan bruges igen
+    warcry: 0, whirl: 0,    // sekunder tilbage af kampråb og hvirvelvind
+    aiming: null,           // 'lightning' | 'firewall': næste tryk på banen bruger evnen
     heroLevel: owns('hero_startxp') ? 5 : 1, heroXp: 0,   // heltens niveau og erfaring på denne bane
     effects: [],            // chokbølger fra heltens hop
     fires: [],              // brand på jorden fra kanoner på niveau 5
@@ -319,10 +332,11 @@ function newGame(map = parseLevel(LEVELS[0])) {
 }
 
 const heroLv = k => state.heroLv[k];
+const warcryMul = () => (state.warcry > 0 ? 1 + CONFIG.abilities.warcry.bonus : 1);
 const levelBonus = () => 1 + CONFIG.heroXp.bonusPerLevel * ((state.heroLevel || 1) - 1);
 // stjerne-køb: Hårdfør +50 % liv, Skarpt sværd +50 % skade, Hurtige ben +30 % fart
 const heroMax = () => Math.round((CONFIG.hero.hp + heroLv('hp') * HERO_UPGRADES.hp.per) * levelBonus() * (owns('hero_tough') ? 1.5 : 1));
-const heroDamage = () => Math.round((CONFIG.hero.damage + heroLv('damage') * HERO_UPGRADES.damage.per) * levelBonus() * (owns('hero_sword') ? 1.5 : 1) * (state.warcry > 0 ? 1.5 : 1));
+const heroDamage = () => Math.round((CONFIG.hero.damage + heroLv('damage') * HERO_UPGRADES.damage.per) * levelBonus() * (owns('hero_sword') ? 1.5 : 1) * warcryMul());
 const xpToNext = () => CONFIG.heroXp.base + CONFIG.heroXp.step * state.heroLevel;
 
 // Helten får erfaring for de monstre, han selv dræber, og stiger i niveau.
@@ -823,6 +837,7 @@ function startWave() {
 
 function endWave() {
   state.shots = [];
+  state.abilityCd = {}; state.warcry = 0; state.whirl = 0; state.aiming = null;
   state.fires = [];
   state.effects = [];
   state.rallyFor = null;
@@ -918,6 +933,7 @@ function update(dt) {
     }
   }
 
+  updateAbilities(dt);
   for (const b of state.buildings.values()) if (dataOf(b).tower) updateTower(b, dt);
   for (const m of state.monsters) if (m.hp > 0) updateMonster(m, dt);
   for (const m of state.monsters.slice()) if (m.s.boss && !m.done) bossSplits(m);
@@ -1029,6 +1045,66 @@ function landJump(h) {
   }
 }
 
+// ---------- evner (købes for stjerner) ----------
+const ABILITY_NAMES = { warcry: 'Kampråb', whirl: 'Hvirvel', lightning: 'Lyn', firewall: 'Ildmur' };   // korte navne til knapperne
+const abilityReady = id => owns(id) && state.phase === 'wave' && !(state.abilityCd[id] > 0);
+
+// Kampråb og hvirvelvind virker med det samme; lyn og ildmur venter på et tryk på banen.
+function useAbility(id) {
+  if (state.aiming === id) { state.aiming = null; return; }   // tryk igen: fortryd
+  if (!abilityReady(id)) return;
+  const cfg = CONFIG.abilities[id], h = state.hero;
+  if (id === 'warcry') {
+    state.warcry = cfg.durationSec;
+    if (h.alive) state.effects.push({ x: h.x, y: h.y, t: 0, dur: 0.6, r: 2.5, color: '220,38,38' });
+  } else if (id === 'whirl') {
+    if (!h.alive) return;
+    state.whirl = cfg.durationSec;
+  } else {
+    state.aiming = id;
+    say(id === 'lightning' ? 'Tryk hvor lynet skal slå ned.' : 'Tryk hvor ildmuren skal stå.');
+    return;
+  }
+  state.abilityCd[id] = cfg.cooldownSec;
+}
+
+// Lynnedslag og ildmur på et punkt p på banen. Afviser punkter uden for banen.
+function castAt(id, p) {
+  if (!abilityReady(id) || !inBounds(Math.floor(p.x), Math.floor(p.y))) return false;
+  const cfg = CONFIG.abilities[id];
+  if (id === 'lightning') {
+    for (const m of state.monsters) if (m.hp > 0 && !m.done && dist(m, p) <= cfg.radius) m.hp -= cfg.damage;
+    state.effects.push({ x: p.x, y: p.y, t: 0, dur: 0.5, r: cfg.radius, color: '234,179,8', bolt: true });
+  } else if (id === 'firewall') {
+    // på tværs af monstrenes vej: går de vandret her, står muren lodret og omvendt
+    const cx = Math.floor(p.x), cy = Math.floor(p.y), f = state.fields.monster;
+    const at = (x, y) => (inBounds(x, y) ? f[idx(x, y)] : Infinity);
+    const across = Math.min(at(cx - 1, cy), at(cx + 1, cy)) <= Math.min(at(cx, cy - 1), at(cx, cy + 1));
+    const half = (cfg.length - 1) / 2;
+    for (let k = -half; k <= half; k++) {
+      const x = cx + (across ? 0 : k), y = cy + (across ? k : 0);
+      if (inBounds(x, y)) state.fires.push({ x: x + 0.5, y: y + 0.5, r: 0.6, t: cfg.durationSec, dps: cfg.dps });
+    }
+  } else return false;
+  state.abilityCd[id] = cfg.cooldownSec;
+  state.aiming = null;
+  return true;
+}
+
+function updateAbilities(dt) {
+  for (const id of Object.keys(state.abilityCd)) state.abilityCd[id] = Math.max(0, state.abilityCd[id] - dt);
+  state.warcry = Math.max(0, state.warcry - dt);
+  const h = state.hero;
+  if (state.whirl > 0 && h.alive) {   // hvirvelvind: skader alt på jorden tæt på helten
+    const cfg = CONFIG.abilities.whirl;
+    for (const m of state.monsters) {
+      if (m.hp <= 0 || m.done || m.s.move === 'fly' || dist(m, h) > cfg.radius) continue;
+      m.hp -= physical(heroDamage() * cfg.dpsFactor, m.s.armor) * dt; m.lastHit = 'hero';
+    }
+  }
+  state.whirl = h.alive ? Math.max(0, state.whirl - dt) : 0;
+}
+
 // Skubbet af hoppet: glider væk, til det har flyttet sig langt nok eller rammer en mur.
 function pushMonster(m, dt) {
   const p = m.push, step = Math.min(p.left, CONFIG.jump.pushSpeed * dt);
@@ -1074,7 +1150,7 @@ function updateSoldier(s, dt) {
       const t = nearestMonster(s, st.range);
       if (t && s.cooldown <= 0) {
         s.cooldown = st.interval;
-        t.hp -= physical(st.damage, t.s.armor);
+        t.hp -= physical(st.damage * warcryMul(), t.s.armor);
         state.shots.push({ x1: s.x, y1: s.y, x2: t.x, y2: t.y, t: 0.1, color: '#4d7c0f' });
       }
     } else {
@@ -1093,7 +1169,7 @@ function updateSoldier(s, dt) {
         const m = s.opponent;
         if (dist(s, m) > SOLDIER_ENGAGE) { moveToward(s, m.x, m.y, SOLDIER_SPEED * dt); return; }
         if (!m.heldBy) m.heldBy = s;
-        if (s.cooldown <= 0) { s.cooldown = st.interval; m.hp -= physical(st.damage, m.s.armor); }
+        if (s.cooldown <= 0) { s.cooldown = st.interval; m.hp -= physical(st.damage * warcryMul(), m.s.armor); }
         return;
       }
     }
@@ -1405,6 +1481,7 @@ function tap(p) {
   const b = buildingAt(cx, cy);
 
   if (state.phase === 'wave') {   // under bølgen: flyt helten, eller tryk på en kaserne for at flytte soldaterne
+    if (state.aiming) { castAt(state.aiming, p); return; }
     if (b && dataOf(b).soldiers) { state.rallyFor = b; say('Tryk hvor soldaterne skal stå.'); return; }
     moveHero(p);
     return;
@@ -1493,6 +1570,7 @@ $('bBuild').onclick = () => {
 $('bSpeed').onclick = () => { state.speed = { 1: 2, 2: 5, 5: 1 }[state.speed]; };
 $('bWeapon').onclick = () => { state.weapon = state.weapon === 'bow' ? 'sword' : 'bow'; };
 $('bJump').onclick = () => heroJump();
+for (const id of Object.keys(ABILITY_NAMES)) $('b_' + id).onclick = () => useAbility(id);
 $('bStart').onclick = () => { startWave(); buildToolbar(); };
 $('bRestart').onclick = () => (state.level ? playLevel(state.level) : startMap(state.map, 0));
 
@@ -1892,9 +1970,16 @@ function draw() {
       ctx.globalAlpha = 1;
       continue;
     }
-    ctx.strokeStyle = `rgba(22,101,52,${1 - f})`; ctx.lineWidth = Math.max(2, tile * 0.18 * (1 - f));
+    const rgb = e.color || '22,101,52';
+    if (e.bolt) {   // lynnedslag: en takket streg ned fra himlen
+      ctx.strokeStyle = `rgba(${rgb},${1 - f})`; ctx.lineWidth = Math.max(2, tile * 0.12);
+      ctx.beginPath(); ctx.moveTo(e.x * tile, (e.y - 5) * tile);
+      for (let k = 1; k <= 5; k++) ctx.lineTo((e.x + (k < 5 ? (k % 2 ? 0.35 : -0.35) : 0)) * tile, (e.y - 5 + k) * tile);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = `rgba(${rgb},${1 - f})`; ctx.lineWidth = Math.max(2, tile * 0.18 * (1 - f));
     ctx.beginPath(); ctx.arc(e.x * tile, e.y * tile, e.r * tile * (0.3 + 0.7 * f), 0, Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = `rgba(134,239,172,${0.25 * (1 - f)})`; ctx.fill();
+    ctx.fillStyle = e.color ? `rgba(${rgb},${0.2 * (1 - f)})` : `rgba(134,239,172,${0.25 * (1 - f)})`; ctx.fill();
   }
 
   // helt
@@ -1911,6 +1996,12 @@ function draw() {
     // i luften: helten løfter sig og bliver større, skyggen bliver på jorden
     const air = h.jump !== undefined ? Math.sin(Math.PI * h.jump / CONFIG.jump.airSec) : 0;
     const lift = air * 0.7, size = 0.4 * (1 + 0.45 * air);
+    if (state.warcry > 0) circle(h.x, h.y - lift, size + 0.15, 'rgba(220,38,38,0.3)');   // kampråb: rød glød
+    if (state.whirl > 0) {   // hvirvelvind: buer, der snurrer rundt om helten
+      const r = CONFIG.abilities.whirl.radius * tile, a0 = performance.now() / 80;
+      ctx.strokeStyle = 'rgba(22,101,52,0.6)'; ctx.lineWidth = Math.max(2, tile * 0.1);
+      for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.arc(h.x * tile, h.y * tile, r * (0.6 + 0.2 * k), a0 + k * 2.1, a0 + k * 2.1 + 1.2); ctx.stroke(); }
+    }
     circle(h.x, h.y - lift, size, '#16a34a', '#052e16');
     hpBar(h.x, h.y - lift, h.hp / heroMax(), 0.65 + lift * 0.3);
   } else {
@@ -1959,6 +2050,14 @@ function drawHud() {
   $('bJump').disabled = state.jumpCooldown > 0 || !h.alive;
   $('bJump').textContent = state.jumpCooldown > 0 ? `Hop (${Math.ceil(state.jumpCooldown)})` : 'Hop!';
   $('bWeapon').textContent = state.weapon === 'bow' ? 'Bue' : 'Sværd';
+  $('msg').style.top = `${$('hud').offsetHeight + 6}px`;   // beskeden under toppen, også når den fylder to linjer
+  for (const id of Object.keys(ABILITY_NAMES)) {
+    const btn = $('b_' + id), cd = state.abilityCd[id] || 0;
+    btn.hidden = state.phase !== 'wave' || !owns(id);
+    btn.disabled = cd > 0 || (id === 'whirl' && !h.alive);
+    btn.classList.toggle('active', state.aiming === id);
+    btn.textContent = cd > 0 ? `${ABILITY_NAMES[id]} (${Math.ceil(cd)})` : ABILITY_NAMES[id];
+  }
   if (!owns('bow')) state.weapon = 'sword';
   $('bSpeed').classList.toggle('active', state.speed > 1);
 
@@ -2236,4 +2335,4 @@ resize();
 showStage(0, true);
 requestAnimationFrame(frame);
 window.borgmuren = { get state() { return state; }, update, startWave, placeCell, placeEdge, moveHero, tap,
-                     recomputeField, hasOpening, setRally, showStage, playLevel, upgrade, playCustom, parseLevel, smash, LEVELS, CONFIG, BUILDINGS, hKey, vKey };
+                     recomputeField, hasOpening, setRally, showStage, playLevel, upgrade, useAbility, castAt, playCustom, parseLevel, smash, LEVELS, CONFIG, BUILDINGS, hKey, vKey };

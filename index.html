@@ -44,6 +44,8 @@
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   #bStart { border-color: var(--accent); }
   #bJump:not(:disabled) { border-color: #86efac; }
+  #hud .ability:not(:disabled) { border-color: #fca5a5; }
+  #hud .ability.active { border-color: var(--warn); background: #432; }
   .info { font-size: 14px; font-weight: bold; }
   #nextWave { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(64px + env(safe-area-inset-bottom, 0px));
               font-size: 14px; background: var(--bar); padding: 5px 10px; border-radius: 6px; display: flex; flex-wrap: wrap; gap: 4px 12px; pointer-events: none; }
@@ -105,6 +107,10 @@
         <span class="stat" id="sHero"></span>
         <button id="bWeapon" hidden>Sværd</button>
         <button id="bJump" hidden>Hop!</button>
+        <button id="b_warcry" class="ability" hidden>Kampråb</button>
+        <button id="b_whirl" class="ability" hidden>Hvirvelvind</button>
+        <button id="b_lightning" class="ability" hidden>Lynnedslag</button>
+        <button id="b_firewall" class="ability" hidden>Ildmur</button>
         <button id="bBuild">Byg</button>
         <button id="bSpeed">Tempo x1</button>
         <button id="bStart">Start bølge</button>
