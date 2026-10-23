@@ -9,7 +9,8 @@ const CONFIG = {
   startGold: 180,
   castleLives: 20,
   wavesPerLevel: 10,       // runder pr. bane, hvis banen ikke selv siger andet (waves.count)
-  freezeImmuneSec: 1,      // så længe er et monster immunt over for frysning, når det er tøet op
+  freezeImmuneSec: 1,
+  roundExtra: { 5: 1.4, 6: 1.4, 7: 1.4, 8: 1.4 },   // runde 5-8 har 40 % flere monstre (de var for nemme)      // så længe er et monster immunt over for frysning, når det er tøet op
   // knight.tres (farten er fordoblet)
   // bow i knight.tres: -3 skade, rækker 4 felter, 10 % hurtigere, rammer flagermus, holder ingen fast
   bow: { damageBonus: -3, range: 4.0, intervalFactor: 0.9 },
@@ -108,7 +109,7 @@ function waveMonsters(n) {
   if (k >= 3) count.shaman = k;
   if (k >= 4) count.slime = 2 * k;
   if (k >= 5) count.dragon = k;
-  let factor = 1 + Math.max(0, n - state.map.waves.same) * state.map.waves.growth;
+  let factor = (1 + Math.max(0, n - state.map.waves.same) * state.map.waves.growth) * (CONFIG.roundExtra[n] || 1);
   const fixed = state.map.waves.total[n];
   if (fixed) factor *= fixed / Object.values(count).reduce((a, b) => a + b, 0);
   for (const [kind, k] of Object.entries(count)) for (let i = 0; i < Math.round(k * factor); i++) list.push(kind);
@@ -117,7 +118,9 @@ function waveMonsters(n) {
     [list[i], list[j]] = [list[j], list[i]];
   }
   if (n === state.map.waves.count) list.push('boss');   // bossen kommer til sidst i sidste runde
-  else if (n % 5 === 0) list.push('miniboss');           // og en mini-boss hver 5. runde
+  else if (n % 5 === 0) {   // og en mini-boss hver 5. runde, der kommer tidligt sammen med de andre
+    list.splice(Math.floor(Math.random() * Math.max(1, list.length / 3)), 0, 'miniboss');
+  }
   return list;
 }
 
