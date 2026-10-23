@@ -45,7 +45,7 @@ const MONSTERS = {
   // bat.tres: flyver lige mod borgen hen over alt
   // boss i sidste runde: stor og langsom, og der kommer små monstre ud af den, hver gang den
   // har mistet 10 % af sit liv (splitEvery), og resten, når den dør
-  boss: { name: 'Kæmpe-trold', hp: 500, armor: 3, speed: 0.45, bounty: 40, castleDamage: 5, damage: 15, interval: 1.5, color: '#7f1d1d', r: 0.6,
+  boss: { name: 'Kæmpe-trold', hp: 5000, armor: 3, speed: 0.45, bounty: 40, castleDamage: 5, damage: 15, interval: 1.5, color: '#7f1d1d', r: 1.2,
           boss: true, breaksFences: true, splitEvery: 0.1, splitKinds: ['blue', 'blue', 'red'] },
   // mini-boss hver 5. runde
   miniboss: { name: 'Trold-høvding', hp: 200, armor: 2, speed: 0.6, bounty: 15, castleDamage: 3, damage: 10, interval: 1.2, color: '#9a3412', r: 0.45, mini: true },
@@ -65,7 +65,7 @@ const MONSTERS = {
 // edge: ligger på stregen mellem to felter (mure og porte), ikke i et felt.
 const BUILDINGS = {
   fence:      { name: 'Hegn', cost: 4, edge: true, climbable: true, hp: 40, width: 0.12, upgradesTo: 'stone_wall', color: '#b45309' },
-  stone_wall: { name: 'Stenmur', cost: 10, edge: true, width: 0.24, upgradesTo: 'tall_wall', color: '#6b7280' },
+  stone_wall: { name: 'Stenmur', cost: 10, edge: true, breakable: true, hp: 120, width: 0.24, upgradesTo: 'tall_wall', color: '#6b7280' },
   tall_wall:  { name: 'Høj mur', cost: 30, edge: true, width: 0.34, color: '#374151' },
   gate:       { name: 'Port', cost: 25, edge: true, width: 0.24, hp: 150, gate: true, upgradesTo: 'iron_gate', color: '#92400e' },
   iron_gate:  { name: 'Jernport', cost: 55, edge: true, width: 0.3, hp: 300, gate: true, color: '#44403c' },
@@ -380,7 +380,7 @@ function edgeCost(ax, ay, bx, by, who) {
   const d = dataOf(w);
   if (!d.gate) {
     if (who === 'climber' && d.climbable) return CONFIG.climbCost;   // øglen kravler over hegn
-    if (who === 'breaker' && d.climbable) return 1 + (w.hp ?? d.hp) / 5;   // bossen smadrer hegn
+    if (who === 'breaker' && (d.climbable || d.breakable)) return 1 + (w.hp ?? d.hp) / 10;   // bossen smadrer hegn og stenmure (10 skade/sek.)
     return who === 'hero' && w.heroDoor ? 0 : Infinity;               // kun helten kan gå gennem opgraderede mure
   }
   return isMonster(who) ? 1 + w.hp / 5 : 0;   // monstrene skal smadre porten først
