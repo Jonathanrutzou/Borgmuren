@@ -99,6 +99,17 @@ const HERO_UPGRADES = {
 };
 const HERO_MAX_LEVEL = 10;
 
+// Tårnlinjer med niveauer, der kan låses op for stjerner (niveau 1-2 er gratis).
+const TOWER_LINES = {
+  archer: { name: 'Bueskyttetårn', lv5text: 'Skyder to pile ad gangen' },
+  cannon: { name: 'Kanontårn', lv5text: 'Brand på jorden i 2 sek.' },
+  mage: { name: 'Magertårn', lv5text: 'Lynet springer til 2 mere' },
+  frost: { name: 'Frysetårn', lv5text: 'Fryser i større område' },
+  barracks: { name: 'Kaserne', lv5text: 'Soldater får skjold (halv skade)' },
+};
+// Bygninger, der skal låses op for stjerner, før de kan bygges.
+const LOCKED = { frost: 'unlock_frost', mage: 'unlock_mage', archer_camp: 'unlock_camp', smithy: 'unlock_smithy' };
+
 const TOOLBAR = ['fence', 'stone_wall', 'gate', 'net', 'archer', 'cannon', 'mage', 'frost', 'barracks', 'archer_camp', 'smithy', 'farm'];
 const SOLDIER_ENGAGE = 0.9;   // soldaterne holder monstre inden for dette
 const SOLDIER_GUARD = 2.0;    // og går ud efter monstre så langt fra deres post
@@ -242,13 +253,13 @@ function newGame(map = parseLevel(LEVELS[0])) {
     phase: 'build',         // 'build' | 'wave' | 'over' | 'won'
     level: 1,
     wave: 1,
-    gold: CONFIG.startGold,
-    lives: CONFIG.castleLives,
+    gold: CONFIG.startGold + 50 * ownCount('gold50'),
+    lives: CONFIG.castleLives + 5 * ownCount('castle5'),
     hero: null,
     heroLv: { attack: 0, damage: 0, hp: 0, move: 0 },
     weapon: 'sword',        // 'sword' | 'bow' (buen købes for stjerner)
     jumpCooldown: 0,        // sekunder til helten kan hoppe igen
-    heroLevel: 1, heroXp: 0,   // heltens niveau og erfaring på denne bane
+    heroLevel: owns('hero_startxp') ? 5 : 1, heroXp: 0,   // heltens niveau og erfaring på denne bane
     effects: [],            // chokbølger fra heltens hop
     monsters: [],
     soldiers: [],
@@ -273,8 +284,9 @@ function newGame(map = parseLevel(LEVELS[0])) {
 
 const heroLv = k => state.heroLv[k];
 const levelBonus = () => 1 + CONFIG.heroXp.bonusPerLevel * ((state.heroLevel || 1) - 1);
-const heroMax = () => Math.round((CONFIG.hero.hp + heroLv('hp') * HERO_UPGRADES.hp.per) * levelBonus());
-const heroDamage = () => Math.round((CONFIG.hero.damage + heroLv('damage') * HERO_UPGRADES.damage.per) * levelBonus());
+// stjerne-køb: Hårdfør +50 % liv, Skarpt sværd +50 % skade, Hurtige ben +30 % fart
+const heroMax = () => Math.round((CONFIG.hero.hp + heroLv('hp') * HERO_UPGRADES.hp.per) * levelBonus() * (owns('hero_tough') ? 1.5 : 1));
+const heroDamage = () => Math.round((CONFIG.hero.damage + heroLv('damage') * HERO_UPGRADES.damage.per) * levelBonus() * (owns('hero_sword') ? 1.5 : 1) * (state.warcry > 0 ? 1.5 : 1));
 const xpToNext = () => CONFIG.heroXp.base + CONFIG.heroXp.step * state.heroLevel;
 
 // Helten får erfaring for de monstre, han selv dræber, og stiger i niveau.
@@ -292,7 +304,7 @@ function gainXp(xp) {
   if (state.heroLevel >= cfg.maxLevel) state.heroXp = 0;
 }
 const heroInterval = () => CONFIG.hero.attackInterval * Math.pow(1 - HERO_UPGRADES.attack.per, heroLv('attack'));
-const heroSpeed = () => CONFIG.hero.speed + heroLv('move') * HERO_UPGRADES.move.per;
+const heroSpeed = () => (CONFIG.hero.speed + heroLv('move') * HERO_UPGRADES.move.per) * (owns('hero_legs') ? 1.3 : 1);
 const heroUpgradeCost = k => Math.round(HERO_UPGRADES[k].cost + HERO_UPGRADES[k].step * heroLv(k));
 
 function buyHeroUpgrade(k) {
@@ -648,6 +660,7 @@ function placeEdge(id, key) {
 function placeCell(id, x, y) {
   const d = BUILDINGS[id];
   if (!inBounds(x, y) || isCastle(x, y) || buildingAt(x, y)) return false;
+  if (LOCKED[id] && !owns(LOCKED[id])) { say(`${d.name} skal låses op for stjerner.`); return false; }
   if (isSpawn(x, y)) { say('Her kommer monstrene ind. Der kan ikke bygges.'); return false; }
   if (isObstacle(x, y)) { say(terrainAt(x, y) === T_WATER ? 'Der kan ikke bygges på vand.' : 'Der kan ikke bygges på sten.'); return false; }
   if (state.gold < d.cost) { say('Ikke nok guld.'); return false; }
@@ -993,7 +1006,7 @@ function heroTakeDamage(raw) {
   const h = state.hero;
   h.hp -= physical(raw, CONFIG.hero.armor);
   if (h.hp <= 0) {
-    h.hp = 0; h.alive = false; h.respawn = CONFIG.hero.respawnSec; h.path = [];
+    h.hp = 0; h.alive = false; h.respawn = owns('hero_revive') ? 5 : CONFIG.hero.respawnSec; h.path = [];
     releaseOpponent(h);
   }
 }
@@ -1489,7 +1502,8 @@ function buildToolbar() {
   state.selected = null;
   if (!(state.buildOpen && state.phase === 'build')) { hideBar(); return; }
   for (const id of TOOLBAR) {
-    const d = BUILDINGS[id];
+    const d = BUILDINGS[id], locked = LOCKED[id] && !owns(LOCKED[id]);
+    if (locked) { add(`${d.name} <small>låst (stjerner)</small>`, false, () => {}, true); continue; }
     add(`${d.name} <small>${d.cost} g</small>`, state.tool === id, () => { state.tool = id; });
   }
   showBar(bar);
@@ -1901,14 +1915,34 @@ function drawHud() {
 // De tre skærme ligger under hinanden; der rulles mellem dem med parallakse (baggrunden flytter sig langsommere).
 const LEVEL_COUNT = 12;      // vises i oversigten; banerne står i levels.js
 const PLAYABLE_LEVELS = LEVELS.length;
-const SHOP = [               // permanente opgraderinger, der købes for stjerner (dem uden id er pladsholdere)
-  { id: 'bow', name: 'Bue til helten', price: 2 },
-  { name: 'Nyt våben: Spyd', price: 3 },
-  { name: 'Tårne: +10 % skade', price: 2 },
-  { name: 'Helten: +20 liv', price: 2 },
-  { name: 'Stærkere mure', price: 3 },
-  { name: '+20 startguld', price: 1 },
-  { name: 'Ny tårntype', price: 4 },
+// Ting, der købes for stjerner i baneoversigten og gælder på alle baner. max: hvor mange gange
+// den kan købes; needs: skal være købt først. Tårnniveau 3-5 åbner for opgraderinger i banen.
+const SHOP = [
+  { group: 'Tårne' },
+  { id: 'unlock_frost', name: 'Frysetårn', price: 2, text: 'Lås op' },
+  { id: 'unlock_mage', name: 'Magertårn', price: 3, text: 'Lås op' },
+  { id: 'unlock_camp', name: 'Bueskyttelejr', price: 2, text: 'Lås op' },
+  { id: 'unlock_smithy', name: 'Smedje', price: 2, text: 'Lås op' },
+  { group: 'Tårnniveauer (op til 5)' },
+  ...['archer', 'cannon', 'mage', 'frost', 'barracks'].flatMap(t => [3, 4, 5].map(lv => ({
+    id: `${t}_lv${lv}`, name: `${TOWER_LINES[t].name} niveau ${lv}`, price: lv - 2, needs: lv > 3 ? `${t}_lv${lv - 1}` : null,
+    text: lv === 5 ? TOWER_LINES[t].lv5text : '+40 % skade',
+  }))),
+  { group: 'Helten' },
+  { id: 'hero_tough', name: 'Hårdfør', price: 2, text: '+50 % liv' },
+  { id: 'hero_sword', name: 'Skarpt sværd', price: 2, text: '+50 % skade' },
+  { id: 'hero_legs', name: 'Hurtige ben', price: 1, text: '+30 % fart' },
+  { id: 'hero_revive', name: 'Hurtig genopstandelse', price: 1, text: 'Tilbage efter 5 sek.' },
+  { id: 'hero_startxp', name: 'Erfaren', price: 2, text: 'Starter på niveau 5' },
+  { group: 'Evner' },
+  { id: 'bow', name: 'Bue', price: 2, text: 'Skyd på afstand' },
+  { id: 'warcry', name: 'Kampråb', price: 2, text: '+50 % skade i 6 sek.' },
+  { id: 'whirl', name: 'Hvirvelvind', price: 3, text: 'Rammer alle tæt på i 3 sek.' },
+  { id: 'lightning', name: 'Lynnedslag', price: 3, text: 'Tryk et sted på banen' },
+  { id: 'firewall', name: 'Ildmur', price: 3, text: 'Brænder i 5 sek.' },
+  { group: 'Andet' },
+  { id: 'gold50', name: '+50 startguld', price: 1, max: 3 },
+  { id: 'castle5', name: 'Borgen +5 liv', price: 1, max: 2 },
 ];
 let stage = 0;               // 0 = start, 1 = baneoversigt, 2 = spillet
 
@@ -1926,8 +1960,12 @@ function loadProgress() {
       const n = Number(k), st = Number(v);
       if (Number.isInteger(n) && n >= 1 && n <= LEVEL_COUNT && st >= 0 && st <= 3) stars[n] = Math.floor(st);
     }
-    const owned = {};
-    for (const it of SHOP) if (it.id && p.owned && p.owned[it.id] === true) owned[it.id] = true;
+    const owned = {};   // id -> antal køb (gamle gem havde true)
+    for (const it of SHOP) {
+      const v = it.id && p.owned ? p.owned[it.id] : 0;
+      const n = v === true ? 1 : Math.floor(Number(v) || 0);
+      if (n > 0) owned[it.id] = Math.min(n, it.max || 1);
+    }
     return { stars, owned };
   } catch (e) { return { stars: {}, owned: {} }; }
 }
@@ -1936,15 +1974,17 @@ function saveProgress() {
   try { localStorage.setItem('borgmuren.progress', JSON.stringify(progress)); } catch (e) { /* ikke vigtigt */ }
 }
 const totalStars = () => Object.values(progress.stars).reduce((a, b) => a + b, 0);
-const spentStars = () => SHOP.reduce((a, it) => a + (it.id && progress.owned[it.id] ? it.price : 0), 0);
+const ownCount = id => progress.owned[id] || 0;
+const owns = id => ownCount(id) > 0;
+const spentStars = () => SHOP.reduce((a, it) => a + (it.id ? it.price * ownCount(it.id) : 0), 0);
 const freeStars = () => totalStars() - spentStars();
-const owns = id => !!progress.owned[id];
 
 function buyShopItem(it) {
-  if (!it.id) return menuSay('Kommer senere.');
-  if (owns(it.id)) return menuSay('Den har du allerede.');
+  if (!it.id) return;
+  if (ownCount(it.id) >= (it.max || 1)) return menuSay('Den har du allerede.');
+  if (it.needs && !owns(it.needs)) return menuSay('Køb det forrige niveau først.');
   if (freeStars() < it.price) return menuSay(`Du mangler ${it.price - freeStars()} ★.`);
-  progress.owned[it.id] = true;
+  progress.owned[it.id] = ownCount(it.id) + 1;
   saveProgress();
   menuSay(`${it.name} er købt.`);
   renderLevels();
@@ -1988,10 +2028,18 @@ function renderLevels() {
   const shop = $('shop');
   shop.innerHTML = '';
   for (const it of SHOP) {
+    if (it.group) {
+      const h = document.createElement('div');
+      h.className = 'group'; h.textContent = it.group;
+      shop.appendChild(h);
+      continue;
+    }
     const b = document.createElement('button');
-    const have = it.id && owns(it.id);
-    if (have) b.className = 'owned';
-    b.innerHTML = `${it.name}<small>${have ? 'Købt' : `${it.price} ★`}</small>`;
+    const n = ownCount(it.id), max = it.max || 1, full = n >= max;
+    if (full) b.className = 'owned';
+    else if (it.needs && !owns(it.needs)) b.className = 'waiting';
+    const status = full ? 'Købt' : `${it.price} ★` + (max > 1 ? ` (${n}/${max})` : '');
+    b.innerHTML = `${it.name}<small>${it.text ? it.text + ' · ' : ''}${status}</small>`;
     b.onclick = () => buyShopItem(it);
     shop.appendChild(b);
   }
@@ -2055,6 +2103,28 @@ $('levels').addEventListener('pointerup', ev => {
   if (lvl) chooseLevel(Number(lvl.dataset.level));
 });
 $('levels').addEventListener('pointercancel', () => { levelDrag = null; });
+
+// Træk op og ned i stjerne-butikken (samme egen håndtering som banerne).
+let shopDrag = null;
+$('shop').addEventListener('pointerdown', ev => {
+  $('shop').setPointerCapture(ev.pointerId);
+  shopDrag = { y: appPoint(ev).y, scroll: $('shop').scrollTop, moved: false };
+});
+$('shop').addEventListener('pointermove', ev => {
+  if (!shopDrag) return;
+  const dy = appPoint(ev).y - shopDrag.y;
+  if (Math.abs(dy) > TAP_SLOP) shopDrag.moved = true;
+  if (shopDrag.moved) $('shop').scrollTop = shopDrag.scroll - dy;
+});
+$('shop').addEventListener('pointerup', ev => {
+  const d = shopDrag; shopDrag = null;
+  if (!d || d.moved) return;
+  const el = document.elementFromPoint(ev.clientX, ev.clientY);
+  const b = el && el.closest('#shop button');
+  if (b) b.click();
+});
+$('shop').addEventListener('pointercancel', () => { shopDrag = null; });
+$('shop').addEventListener('wheel', ev => { ev.preventDefault(); $('shop').scrollTop += ev.deltaY; }, { passive: false });
 $('levels').addEventListener('wheel', ev => { ev.preventDefault(); $('levels').scrollLeft += ev.deltaX || ev.deltaY; }, { passive: false });
 
 $('scrStart').onclick = () => showStage(1);
