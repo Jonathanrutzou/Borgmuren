@@ -107,6 +107,41 @@ const TOWER_LINES = {
   frost: { name: 'Frysetårn', lv5text: 'Fryser i større område' },
   barracks: { name: 'Kaserne', lv5text: 'Soldater får skjold (halv skade)' },
 };
+// Niveau 3-5 for tårnlinjerne laves ud fra niveau 2: +40 % skade pr. niveau, lidt længere
+// rækkevidde, og opgraderingen koster 30 % mere end den forrige. Niveau 5 får en særlig evne.
+// Hver bygning får line (tårnlinjen) og level (1-5), så opgraderingen kan kræve stjerner.
+(function makeTowerLevels() {
+  const lv5 = { archer: { multishot: 2 }, cannon: { burn: 2 }, mage: { chain: 2 }, frost: { splashBoost: 0.6 } };
+  for (const line of Object.keys(TOWER_LINES)) {
+    const ids = [line, line + '_2'];
+    if (BUILDINGS[line + '_3']) ids.push(line + '_3');   // kasernen har allerede niveau 3
+    while (ids.length < 5) {
+      const lvl = ids.length + 1, prev = BUILDINGS[ids[ids.length - 1]], before = BUILDINGS[ids[ids.length - 2]];
+      const id = `${line}_${lvl}`, d = { ...prev, name: `${TOWER_LINES[line].name} niv. ${lvl}`, tier: lvl };
+      d.cost = prev.cost + Math.round((prev.cost - before.cost) * 1.3);
+      if (prev.tower) {
+        d.tower = { ...prev.tower, damage: Math.round(prev.tower.damage * 1.4), range: prev.tower.range < 20 ? +(prev.tower.range + 0.2).toFixed(1) : prev.tower.range };
+        if (lvl === 5) {
+          Object.assign(d.tower, lv5[line] || {});
+          if (d.tower.splashBoost) { d.tower.splash += d.tower.splashBoost; delete d.tower.splashBoost; }
+        }
+      }
+      if (prev.soldiers) {
+        const p = prev.soldiers;
+        d.soldiers = { ...p, count: lvl === 5 ? p.count + 1 : p.count, hp: p.hp + 50, damage: p.damage + 4, armor: p.armor + 1 };
+        if (lvl === 5) d.soldiers.shield = true;   // soldaterne tager halv skade
+      }
+      delete d.upgradesTo;
+      BUILDINGS[id] = d;
+      BUILDINGS[ids[ids.length - 1]].upgradesTo = id;
+      ids.push(id);
+    }
+    ids.forEach((id, i) => { BUILDINGS[id].line = line; BUILDINGS[id].level = i + 1; if (i > 0) BUILDINGS[id].tier = i + 1; });
+  }
+})();
+// Opgradering til niveau 3-5 kræver, at niveauet er købt for stjerner.
+const levelLocked = id => { const d = BUILDINGS[id]; return !!(d && d.line && d.level >= 3 && !owns(`${d.line}_lv${d.level}`)); };
+
 // Bygninger, der skal låses op for stjerner, før de kan bygges.
 const LOCKED = { frost: 'unlock_frost', mage: 'unlock_mage', archer_camp: 'unlock_camp', smithy: 'unlock_smithy' };
 
@@ -261,6 +296,7 @@ function newGame(map = parseLevel(LEVELS[0])) {
     jumpCooldown: 0,        // sekunder til helten kan hoppe igen
     heroLevel: owns('hero_startxp') ? 5 : 1, heroXp: 0,   // heltens niveau og erfaring på denne bane
     effects: [],            // chokbølger fra heltens hop
+    fires: [],              // brand på jorden fra kanoner på niveau 5
     monsters: [],
     soldiers: [],
     wizards: [],            // magikere fra magertårne
@@ -716,7 +752,7 @@ function repair(b) {
 
 function upgrade(b) {
   const c = upgradeCost(b);
-  if (c === null || c > state.gold) return;
+  if (c === null || c > state.gold || levelLocked(dataOf(b).upgradesTo)) return;
   state.gold -= c; b.spent += c;
   if (isWall(b) && !dataOf(b).gate) b.heroDoor = true;   // helten kan gå gennem opgraderede hegn og mure
   b.id = dataOf(b).upgradesTo;
@@ -787,6 +823,7 @@ function startWave() {
 
 function endWave() {
   state.shots = [];
+  state.fires = [];
   state.effects = [];
   state.rallyFor = null;
   let income = 0;   // gårde, der blev smadret i bølgen, er væk og giver ikke guld
@@ -900,6 +937,11 @@ function update(dt) {
   state.monsters = state.monsters.filter(m => m.hp > 0 && !m.done);
   for (const sh of state.shots) sh.t -= dt;
   for (const e of state.effects) e.t += dt;
+  for (const f of state.fires) {   // brand: skader monstre på jorden, der står i den
+    f.t -= dt;
+    for (const m of state.monsters) if (m.hp > 0 && m.s.move !== 'fly' && dist(m, f) <= f.r) m.hp -= f.dps * dt;
+  }
+  state.fires = state.fires.filter(f => f.t > 0);
   state.effects = state.effects.filter(e => e.t < e.dur);
   state.shots = state.shots.filter(sh => sh.t > 0);
 
@@ -1106,7 +1148,7 @@ function wizardTakeDamage(w, raw) {
 }
 
 function soldierTakeDamage(s, raw) {
-  s.hp -= physical(raw, s.stats.armor);
+  s.hp -= physical(raw, s.stats.armor) * (s.stats.shield ? 0.5 : 1);   // niveau 5 kaserne: skjold
   if (s.hp <= 0) {
     s.alive = false; s.respawn = CONFIG.soldierRespawnSec;
     releaseOpponent(s);
@@ -1139,7 +1181,25 @@ function updateTower(b, dt) {
   };
   if (t.splash) { for (const m of state.monsters) if (m.hp > 0 && canHit(m) && dist(m, target) <= t.splash) hit(m); }
   else hit(target);
-  state.shots.push({ x1: c.x, y1: c.y, x2: target.x, y2: target.y, t: 0.12, color: t.magic ? '#7c3aed' : t.freeze ? '#22d3ee' : '#111', splash: t.splash });
+  const color = t.magic ? '#7c3aed' : t.freeze ? '#22d3ee' : '#111';
+  state.shots.push({ x1: c.x, y1: c.y, x2: target.x, y2: target.y, t: 0.12, color, splash: t.splash });
+  if (t.multishot) {   // niveau 5 bueskytte: flere pile, hver mod sit eget monster
+    const others = state.monsters.filter(m => m !== target && m.hp > 0 && canHit(m) && dist(m, c) <= t.range)
+      .sort((a, b2) => dist(a, c) - dist(b2, c)).slice(0, t.multishot - 1);
+    for (const m of others) { hit(m); state.shots.push({ x1: c.x, y1: c.y, x2: m.x, y2: m.y, t: 0.12, color }); }
+  }
+  if (t.chain) {   // niveau 5 magertårn: lynet springer videre til de nærmeste monstre
+    let from = target;
+    const hitSet = new Set([target]);
+    for (let k = 0; k < t.chain; k++) {
+      const next = state.monsters.filter(m => !hitSet.has(m) && m.hp > 0 && dist(m, from) <= 3).sort((a, b2) => dist(a, from) - dist(b2, from))[0];
+      if (!next) break;
+      hit(next); hitSet.add(next);
+      state.shots.push({ x1: from.x, y1: from.y, x2: next.x, y2: next.y, t: 0.15, color });
+      from = next;
+    }
+  }
+  if (t.burn) state.fires.push({ x: target.x, y: target.y, r: t.splash, t: t.burn, dps: Math.round(dmg * 0.3) });   // niveau 5 kanon: brand
 }
 
 // Hvor monsteret skal hen nu: det fjerneste punkt på vejen, det kan se i lige linje.
@@ -1488,7 +1548,8 @@ function buildToolbar() {
     info.textContent = d.name + (hasHp(b) ? ` (${Math.ceil(b.hp)}/${maxHp(b)} liv)` : '');
     bar.appendChild(info);
     const up = upgradeCost(b);
-    if (up !== null) add(`Opgradér til ${BUILDINGS[d.upgradesTo].name} <small>${up} g</small>`, false, () => upgrade(b), up > state.gold);
+    if (up !== null && levelLocked(d.upgradesTo)) add(`${BUILDINGS[d.upgradesTo].name} <small>kræver stjerner</small>`, false, () => {}, true);
+    else if (up !== null) add(`Opgradér til ${BUILDINGS[d.upgradesTo].name} <small>${up} g</small>`, false, () => upgrade(b), up > state.gold);
     if (hasHp(b) && b.hp < maxHp(b)) add(`Reparér <small>${repairCost(b)} g</small>`, false, () => repair(b), repairCost(b) > state.gold);
     if (d.soldiers) add('Flyt soldater', false, () => { state.rallyFor = b; say('Tryk hvor soldaterne skal stå.'); });
     if (d.tower && d.tower.magic && !b.wizard) {
@@ -1814,6 +1875,12 @@ function draw() {
     ctx.fillRect(s.x * tile - sz / 2, s.y * tile - sz / 2, sz, sz);
     ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.strokeRect(s.x * tile - sz / 2, s.y * tile - sz / 2, sz, sz);
     if (s.hp < s.stats.hp) hpBar(s.x, s.y, s.hp / s.stats.hp);
+  }
+
+  // brand på jorden: orange pletter, der flakker
+  for (const f of state.fires) {
+    ctx.fillStyle = `rgba(249,115,22,${0.25 + 0.1 * Math.sin(f.t * 12)})`;
+    ctx.beginPath(); ctx.arc(f.x * tile, f.y * tile, f.r * tile, 0, Math.PI * 2); ctx.fill();
   }
 
   // chokbølger fra hoppet: en ring, der vokser og falmer
@@ -2169,4 +2236,4 @@ resize();
 showStage(0, true);
 requestAnimationFrame(frame);
 window.borgmuren = { get state() { return state; }, update, startWave, placeCell, placeEdge, moveHero, tap,
-                     recomputeField, hasOpening, setRally, showStage, playLevel, playCustom, parseLevel, smash, LEVELS, CONFIG, BUILDINGS, hKey, vKey };
+                     recomputeField, hasOpening, setRally, showStage, playLevel, upgrade, playCustom, parseLevel, smash, LEVELS, CONFIG, BUILDINGS, hKey, vKey };
