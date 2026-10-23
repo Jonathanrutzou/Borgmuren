@@ -1614,6 +1614,48 @@ function drawShadows(dpr) {
   ctx.restore();
 }
 
+// ---------- dag til nat ----------
+// Lyset skifter gradvist fra dag (første runde) til nat (sidste runde). Om natten lyser
+// monstre, skud og tårne op.
+const NIGHT_MAX = 0.62;   // hvor mørk den sidste runde er (0 = dag, 1 = helt sort)
+const nightLevel = () => {
+  const n = state.map.waves.count;
+  return n > 1 ? NIGHT_MAX * (state.wave - 1) / (n - 1) : 0;
+};
+
+function glow(x, y, r, color, a) {
+  const g = ctx.createRadialGradient(x * tile, y * tile, 0, x * tile, y * tile, r * tile);
+  g.addColorStop(0, color.replace('A', a)); g.addColorStop(1, color.replace('A', 0));
+  ctx.fillStyle = g;
+  ctx.fillRect((x - r) * tile, (y - r) * tile, 2 * r * tile, 2 * r * tile);
+}
+
+function drawNight() {
+  const night = nightLevel();
+  if (night <= 0.01) return;
+  ctx.fillStyle = `rgba(12,20,48,${night})`;
+  ctx.fillRect(-tile * 3, -tile * 3, (COLS + 6) * tile, (ROWS + 6) * tile);
+  const a = Math.min(1, night * 1.4);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const b of state.buildings.values()) {   // tårne: varmt lys
+    if (dataOf(b).tower) glow(b.x + 0.5, b.y + 0.5, 1.3, 'rgba(255,190,90,A)', 0.5 * a);
+  }
+  const c = state.map.castle;   // borgen: lys i vinduerne
+  glow(c.x + c.w / 2, c.y + c.h / 2, Math.max(c.w, c.h) * 0.7, 'rgba(255,200,120,A)', 0.35 * a);
+  for (const m of state.monsters) {   // monstre: lyser i deres egen farve
+    const hex = m.s.color, r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), bl = parseInt(hex.slice(5, 7), 16);
+    glow(m.x, m.y, m.s.r * 2.2, `rgba(${r},${g},${bl},A)`, 0.7 * a);
+  }
+  for (const sh of state.shots) {   // skud: lysende streger
+    ctx.strokeStyle = `rgba(255,240,180,${0.8 * a})`; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(sh.x1 * tile, sh.y1 * tile); ctx.lineTo(sh.x2 * tile, sh.y2 * tile); ctx.stroke();
+  }
+  const h = state.hero;
+  if (h.alive) glow(h.x, h.y, 1.0, 'rgba(160,255,170,A)', 0.4 * a);
+  ctx.restore();
+}
+
 function draw() {
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1796,6 +1838,7 @@ function draw() {
     text(`${Math.ceil(h.respawn)}`, s.x * tile, s.y * tile, tile * 0.45, '#dc2626');
   }
 
+  drawNight();
   drawHud();
 }
 
