@@ -18,7 +18,7 @@ const CONFIG = {
   // bow i knight.tres: -3 skade, rækker 4 felter, 10 % hurtigere, rammer flagermus, holder ingen fast
   bow: { damageBonus: -3, range: 4.0, intervalFactor: 0.9 },
   // heltens hop: lander efter airSec, skader monstre inden for radius og skubber dem push felter væk
-  jump: { cooldownSec: 12, airSec: 0.55, radius: 2.0, push: 3, damage: 25, pushSpeed: 12 },
+  jump: { cooldownSec: 12, airSec: 0.55, radius: 3.0, push: 6, damage: 25, pushSpeed: 12 },
   // evner købt for stjerner (knapper i toppen under bølgen). Ventetiden nulstilles efter hver bølge.
   // Kampråb: +50 % skade til helt og soldater. Hvirvelvind: helten snurrer og skader alt tæt på
   // (dpsFactor × heltens skade pr. sek.). Lynnedslag: magisk skade et sted man trykker (også flyvende).
@@ -39,14 +39,16 @@ const CONFIG = {
   buildingHp: 100,         // liv for bygninger; monstrene kan smadre dem og porte, men ikke mure
   climbCost: 3,            // ekstra vejpris for at kravle over et hegn
   climbSpeed: 0.35,        // øglen kravler med 35 % af sin fart
+  repairFactor: 0.5,       // reparation koster halvdelen af den del af prisen, der svarer til de manglende liv
   sellRatio: 0.6,          // ældre bygninger sælges for 60 %; nye i samme byggefase for fuld pris
   starLives: [18, 10],      // borgens liv tilbage for 3 og 2 stjerner (ellers 1)
   // Runderne holdes korte: højst maxPerRound monstre pr. runde. Giver formlen flere, får hvert
   // monster tilsvarende mere liv, så den samlede mængde liv er den samme. Monstrene kommer i
   // grupper på groupSize, tæt efter hinanden (groupSpawnSec); næste gruppe kommer, når der er
   // højst groupNextAt monstre tilbage, eller efter groupWaitSec.
-  maxPerRound: 200, groupSize: 10, groupSpawnSec: 0.2, groupNextAt: 5, groupWaitSec: 10,
-  monsterHpGrowth: 0.075,   // +7,5 % liv pr. bølge, oven i den forrige (runde 10: 1,9×, runde 20: 4,0×)
+  maxPerRound: 200, groupSize: 25, groupSpawnSec: 0.2, groupNextAt: 5, groupWaitSec: 6,
+  monsterHpGrowth: 0.13,   // +13 % liv pr. bølge fra hpGrowthFrom, oven i den forrige (runde 10: 1,8×, runde 20: 6,3×)
+  hpGrowthFrom: 5,          // runde 1-4 har samme liv; stigningen starter i runde 5
 };
 
 // grunt.tres og runner.tres
@@ -734,7 +736,7 @@ const isWall = o => !!dataOf(o).edge;
 function sellValue(b) { return b.fresh ? b.spent : Math.floor(b.spent * CONFIG.sellRatio); }
 const maxHp = b => dataOf(b).hp || CONFIG.buildingHp;
 const hasHp = b => b.hp !== undefined;
-function repairCost(b) { return Math.ceil(dataOf(b).cost * (1 - b.hp / maxHp(b))); }
+function repairCost(b) { return Math.ceil(dataOf(b).cost * (1 - b.hp / maxHp(b)) * CONFIG.repairFactor); }
 function upgradeCost(b) {
   const to = dataOf(b).upgradesTo;
   return to ? Math.max(BUILDINGS[to].cost - dataOf(b).cost, 0) : null;
@@ -878,7 +880,7 @@ function endWave() {
 function waveHp(s, scale = state.waveHpScale || 1) {
   const w = state.map.waves, extra = Math.max(0, state.wave - w.same) * w.hpGrowth;
   const pool = s.boss || s.mini ? 1 : scale;   // bosserne får ikke ekstra liv fra loftet
-  return Math.round(s.hp * Math.pow(1 + CONFIG.monsterHpGrowth, state.wave - 1) * (1 + extra) * pool);
+  return Math.round(s.hp * Math.pow(1 + CONFIG.monsterHpGrowth, Math.max(0, state.wave - CONFIG.hpGrowthFrom + 1)) * (1 + extra) * pool);
 }
 
 function spawnMonster(kind) {
