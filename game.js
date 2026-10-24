@@ -61,7 +61,7 @@ const MONSTERS = {
   boss: { name: 'Kæmpe-trold', hp: 5000, armor: 3, speed: 0.45, bounty: 40, castleDamage: 5, damage: 15, interval: 1.5, color: '#7f1d1d', r: 1.2,
           boss: true, breaksFences: true, splitEvery: 0.1, splitKinds: ['blue', 'blue', 'red'] },
   // mini-boss hver 5. runde
-  miniboss: { name: 'Trold-høvding', hp: 200, armor: 2, speed: 0.6, bounty: 15, castleDamage: 3, damage: 10, interval: 1.2, color: '#9a3412', r: 0.45, mini: true },
+  miniboss: { name: 'Trold-høvding', hp: 200, armor: 2, speed: 0.6, bounty: 15, castleDamage: 3, damage: 10, interval: 1.2, color: '#9a3412', r: 0.45, mini: true, breaksFences: true },
   // nye monstre efter runde 10
   wolf:   { name: 'Ulv', hp: 30, armor: 0, speed: 2.6, bounty: 3, castleDamage: 1, damage: 4, interval: 0.8, color: '#64748b', r: 0.24 },
   shield: { name: 'Skjoldtrold', hp: 80, armor: 6, speed: 0.7, bounty: 6, castleDamage: 1, damage: 8, interval: 1.2, color: '#334155', r: 0.34 },
