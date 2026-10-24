@@ -47,7 +47,7 @@ const CONFIG = {
   // grupper på groupSize, tæt efter hinanden (groupSpawnSec); næste gruppe kommer, når der er
   // højst groupNextAt monstre tilbage, eller efter groupWaitSec.
   maxPerRound: 200, groupSize: 25, groupSpawnSec: 0.2, groupNextAt: 5, groupWaitSec: 6,
-  monsterHpGrowth: 0.13,   // +13 % liv pr. bølge fra hpGrowthFrom, oven i den forrige (runde 10: 1,8×, runde 20: 6,3×)
+  monsterHpGrowth: 0.13,   // +13 % liv pr. bølge fra hpGrowthFrom, oven i den forrige (runde 10: 2,1×, runde 20: 7,1×)
   hpGrowthFrom: 5,          // runde 1-4 har samme liv; stigningen starter i runde 5
 };
 
@@ -60,8 +60,9 @@ const MONSTERS = {
   // bat.tres: flyver lige mod borgen hen over alt
   // boss i sidste runde: stor og langsom, og der kommer små monstre ud af den, hver gang den
   // har mistet 10 % af sit liv (splitEvery), og resten, når den dør
-  boss: { name: 'Kæmpe-trold', hp: 5000, armor: 3, speed: 0.45, bounty: 40, castleDamage: 5, damage: 15, interval: 1.5, color: '#7f1d1d', r: 1.2,
+  boss: { name: 'Kæmpe-trold', hp: 5000, armor: 3, speed: 0.45, bounty: 40, castleDamage: 5, damage: 75, interval: 1.5, color: '#7f1d1d', r: 1.2, splash: 1.5,
           boss: true, breaksFences: true, splitEvery: 0.1, splitKinds: ['blue', 'blue', 'red'] },
+  // (splash: slaget rammer også helt, soldater og magikere inden for så mange felter)
   // mini-boss hver 5. runde
   miniboss: { name: 'Trold-høvding', hp: 200, armor: 2, speed: 0.6, bounty: 15, castleDamage: 3, damage: 10, interval: 1.2, color: '#9a3412', r: 0.45, mini: true, breaksFences: true },
   // nye monstre efter runde 10
@@ -1355,7 +1356,7 @@ function updateMonster(m, dt) {
       if (dist(foe, m) > CONFIG.hero.engageRange) moveToward(m, foe.x, foe.y, s.speed * dt);
       else if (m.cooldown <= 0) {
         m.cooldown = s.interval;
-        if (foe === h) heroTakeDamage(s.damage); else soldierTakeDamage(foe, s.damage);
+        monsterAttack(m, foe);
       }
       m.repath = 0;
       return;
@@ -1365,7 +1366,7 @@ function updateMonster(m, dt) {
   // Borgspillet: monstre tæt på helten går efter ham først (ikke gennem mure)
   if (h.alive && dist(h, m) <= CONFIG.hero.threatRange && losClear(m, h, moverOf(m))) {
     if (dist(h, m) > CONFIG.hero.engageRange * 0.9) moveToward(m, h.x, h.y, s.speed * dt);
-    else if (m.cooldown <= 0) { m.cooldown = s.interval; heroTakeDamage(s.damage); }
+    else if (m.cooldown <= 0) { m.cooldown = s.interval; monsterAttack(m, h); }
     m.repath = 0;
     return;
   }
@@ -1373,7 +1374,7 @@ function updateMonster(m, dt) {
   const wz = state.wizards.find(w => w.alive && dist(w, m) <= CONFIG.hero.threatRange && losClear(m, w, moverOf(m)));
   if (wz) {
     if (dist(wz, m) > CONFIG.hero.engageRange * 0.9) moveToward(m, wz.x, wz.y, s.speed * dt);
-    else if (m.cooldown <= 0) { m.cooldown = s.interval; wizardTakeDamage(wz, s.damage); }
+    else if (m.cooldown <= 0) { m.cooldown = s.interval; monsterAttack(m, wz); }
     m.repath = 0;
     return;
   }
@@ -1393,6 +1394,21 @@ function updateMonster(m, dt) {
   if (wp.kind === 'climb') { m.climbTo = wp.p; return; }
   if (!stillThere(wp.obj)) { m.repath = 0; return; }           // smadr bygningen eller porten (aldrig mure)
   smash(m, wp.obj);
+}
+
+// Et monster slår helten, en soldat eller en magiker. Med splash rammes alle inden for området.
+function hitUnit(o, raw) {
+  if (o === state.hero) heroTakeDamage(raw);
+  else if (state.wizards.includes(o)) wizardTakeDamage(o, raw);
+  else soldierTakeDamage(o, raw);
+}
+function monsterAttack(m, foe) {
+  const s = m.s;
+  hitUnit(foe, s.damage);
+  if (!s.splash) return;
+  const h = state.hero, others = [h, ...state.soldiers, ...state.wizards];
+  for (const o of others) if (o !== foe && o.alive && dist(o, foe) <= s.splash) hitUnit(o, s.damage);
+  state.effects.push({ x: foe.x, y: foe.y, t: 0, dur: 0.4, r: s.splash, color: '127,29,29' });
 }
 
 function stillThere(o) {
