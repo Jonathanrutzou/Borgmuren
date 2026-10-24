@@ -1,5 +1,5 @@
 // Baneeditor til Borgmuren. Ikke en del af spillet: den lægges kun ind i editor-udgaven
-// (python3 build_artifact.py <udfil> --editor). Mal vand, sten, indgang og borg, prøv banen
+// (python3 build_artifact.py <udfil> --editor). Mal vand, sten, træer, indgang og borg, prøv banen
 // med det samme, og kopiér den til levels.js. Kan også læse en tegning med de faste farver.
 'use strict';
 (function () {
@@ -7,11 +7,12 @@
     { ch: '.', name: 'Græs', color: '#e7e2d4' },
     { ch: '~', name: 'Vand', color: '#a9c9d6' },
     { ch: '#', name: 'Sten', color: '#a39d92' },
+    { ch: 'T', name: 'Træ', color: '#5f7d4a' },
     { ch: 'S', name: 'Indgang', color: '#f3b8b0' },
     { ch: 'C', name: 'Borg', color: '#7c5a3a' },
   ];
   // de faste farver i tegninger (samme som tools/level_colors.py)
-  const DRAW_COLORS = { '.': [255, 255, 255], '~': [59, 130, 246], '#': [128, 128, 128], S: [239, 68, 68], C: [139, 90, 43] };
+  const DRAW_COLORS = { '.': [255, 255, 255], '~': [59, 130, 246], '#': [128, 128, 128], T: [34, 139, 34], S: [239, 68, 68], C: [139, 90, 43] };
   const CELL_PX = 32;
 
   const css = document.createElement('style');

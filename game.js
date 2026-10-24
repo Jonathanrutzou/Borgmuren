@@ -211,8 +211,8 @@ function isCastle(x, y) {
 }
 
 // ---------- baner ----------
-const T_GRASS = 0, T_WATER = 1, T_ROCK = 2, T_SPAWN = 3;
-const TERRAIN_CHARS = { '.': T_GRASS, '~': T_WATER, '#': T_ROCK, 'S': T_SPAWN, 'C': T_GRASS };
+const T_GRASS = 0, T_WATER = 1, T_ROCK = 2, T_SPAWN = 3, T_TREE = 4;   // træer er forhindringer ligesom sten
+const TERRAIN_CHARS = { '.': T_GRASS, '~': T_WATER, '#': T_ROCK, 'S': T_SPAWN, 'C': T_GRASS, 'T': T_TREE };
 
 // Læser en bane (fra levels.js eller baneeditoren). Kort fra editoren er utroværdige, så alt
 // tjekkes; giver null og en forklaring, hvis banen ikke kan bruges.
@@ -259,7 +259,7 @@ function parseLevel(level) {
 }
 
 const terrainAt = (x, y) => state.map.terrain[idx(x, y)];
-const isObstacle = (x, y) => { const t = terrainAt(x, y); return t === T_WATER || t === T_ROCK; };
+const isObstacle = (x, y) => { const t = terrainAt(x, y); return t === T_WATER || t === T_ROCK || t === T_TREE; };
 const isSpawn = (x, y) => terrainAt(x, y) === T_SPAWN;
 // Kan ingen gå her (spærrende bygning, vand eller sten)?
 const isSolid = (x, y) => isBlocking(x, y) || isObstacle(x, y);
@@ -715,7 +715,7 @@ function placeCell(id, x, y) {
   if (!inBounds(x, y) || isCastle(x, y) || buildingAt(x, y)) return false;
   if (LOCKED[id] && !owns(LOCKED[id])) { say(`${d.name} skal låses op for stjerner.`); return false; }
   if (isSpawn(x, y)) { say('Her kommer monstrene ind. Der kan ikke bygges.'); return false; }
-  if (isObstacle(x, y)) { say(terrainAt(x, y) === T_WATER ? 'Der kan ikke bygges på vand.' : 'Der kan ikke bygges på sten.'); return false; }
+  if (isObstacle(x, y)) { say({ [T_WATER]: 'Der kan ikke bygges på vand.', [T_TREE]: 'Der kan ikke bygges på et træ.' }[terrainAt(x, y)] || 'Der kan ikke bygges på sten.'); return false; }
   if (state.gold < d.cost) { say('Ikke nok guld.'); return false; }
   const h = state.hero;
   if (d.blocks && Math.floor(h.x) === x && Math.floor(h.y) === y) { say('Helten står der.'); return false; }
@@ -1909,6 +1909,19 @@ function buildLandscape(map) {
       g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 1;
       const wx = ox + P * (0.25 + hash2(cx, cy, 41) * 0.4), wy = oy + P * (0.3 + hash2(cx, cy, 42) * 0.4);
       g.beginPath(); g.moveTo(wx, wy); g.quadraticCurveTo(wx + 3, wy - 2, wx + 6, wy); g.stroke();
+    } else if (tt === T_TREE) {   // et træ set oppefra: skygge, mørk krone og lysere toppe
+      const tx = ox + P * (0.45 + hash2(cx, cy, 70) * 0.1), ty = oy + P * (0.45 + hash2(cx, cy, 71) * 0.1), r = P * 0.44;
+      g.fillStyle = 'rgba(0,0,0,0.28)';
+      g.beginPath(); g.ellipse(tx + r * 0.35, ty + r * 0.4, r, r * 0.9, 0, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#3f6233';
+      for (let k = 0; k < 5; k++) {
+        const a = k * 1.26 + hash2(cx, cy, 72) * 6;
+        g.beginPath(); g.arc(tx + Math.cos(a) * r * 0.45, ty + Math.sin(a) * r * 0.45, r * 0.55, 0, Math.PI * 2); g.fill();
+      }
+      g.fillStyle = '#56803f';
+      g.beginPath(); g.arc(tx - r * 0.2, ty - r * 0.2, r * 0.42, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#6f9a50';
+      g.beginPath(); g.arc(tx - r * 0.3, ty - r * 0.32, r * 0.2, 0, Math.PI * 2); g.fill();
     } else if (tt === T_ROCK) {   // 2-3 sten med skygge og lys kant
       const n = 2 + Math.floor(hash2(cx, cy, 50) * 2);
       for (let k = 0; k < n; k++) {
@@ -1959,7 +1972,7 @@ function drawFlatTerrain() {
   for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
     const t = terrainAt(x, y);
     if (t === T_GRASS) continue;
-    ctx.fillStyle = t === T_SPAWN ? 'rgba(239,68,68,0.14)' : t === T_WATER ? '#a9c9d6' : '#a39d92';
+    ctx.fillStyle = t === T_SPAWN ? 'rgba(239,68,68,0.14)' : t === T_WATER ? '#a9c9d6' : t === T_TREE ? '#8fa77c' : '#a39d92';
     ctx.fillRect(x * tile, y * tile, tile + 0.5, tile + 0.5);
     if (t === T_WATER) {   // små bølger
       ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = Math.max(1, tile * 0.05);
