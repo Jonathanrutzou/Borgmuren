@@ -46,7 +46,7 @@ const CONFIG = {
   // grupper på groupSize, tæt efter hinanden (groupSpawnSec); næste gruppe kommer, når der er
   // højst groupNextAt monstre tilbage, eller efter groupWaitSec.
   maxPerRound: 200, groupSize: 50, groupSpawnSec: 0.2, groupNextAt: 10, groupWaitSec: 15,
-  monsterHpGrowth: 0.15,   // +15 % liv pr. bølge, oven i den forrige (runde 10: 3,5×, runde 20: 14×)
+  monsterHpGrowth: 0.075,   // +7,5 % liv pr. bølge, oven i den forrige (runde 10: 1,9×, runde 20: 4,0×)
 };
 
 // grunt.tres og runner.tres
@@ -2519,4 +2519,4 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && sta
 window.addEventListener('keydown', ev => { if (ev.key === 'l' || ev.key === 'L') landscapeOn = !landscapeOn; });
 window.addEventListener('pagehide', () => { if (state.phase === 'build' && inProgress(state.level)) saveGame(); });
 window.borgmuren = { get state() { return state; }, update, startWave, placeCell, placeEdge, moveHero, tap,
-                     recomputeField, hasOpening, setRally, showStage, playLevel, upgrade, useAbility, castAt, saveGame, loadGame, readSave, chooseLevel, playCustom, parseLevel, smash, LEVELS, CONFIG, BUILDINGS, hKey, vKey };
+                     recomputeField, hasOpening, setRally, showStage, playLevel, upgrade, useAbility, castAt, saveGame, loadGame, readSave, chooseLevel, waveMonsters, waveHp, MONSTERS, playCustom, parseLevel, smash, LEVELS, CONFIG, BUILDINGS, hKey, vKey };
