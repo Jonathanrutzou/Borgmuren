@@ -823,6 +823,7 @@ function setRally(b, p) {
 // ---------- bølger ----------
 function startWave() {
   if (state.phase !== 'build' || !hasOpening()) return;
+  saveGame();   // med det, der er bygget i byggefasen
   state.phase = 'wave';
   state.selected = null;
   state.buildOpen = false;
@@ -869,6 +870,7 @@ function endWave() {
   if (state.wave >= state.map.waves.count) { state.phase = 'won'; return; }
   state.phase = 'build';
   state.wave++;
+  saveGame();
   if (income) say(`Gårdene gav ${income} guld.`);
 }
 
@@ -2139,6 +2141,66 @@ const progress = loadProgress();
 function saveProgress() {
   try { localStorage.setItem('borgmuren.progress', JSON.stringify(progress)); } catch (e) { /* ikke vigtigt */ }
 }
+// Den bane, man er i gang med, gemmes i byggefasen, så man kan fortsætte, også hvis appen lukkes.
+// Kun bygninger, guld, liv og helten gemmes; en bølge, der var i gang, starter forfra.
+const SAVE_KEY = 'borgmuren.save';
+function saveGame() {
+  if (!state.level || (state.phase !== 'build' && state.phase !== 'wave')) return;
+  const bs = [...state.buildings.values()].map(b => ({ id: b.id, x: b.x, y: b.y, hp: b.hp, spent: b.spent, rally: b.rally, wizard: !!b.wizard }));
+  const ws = [...state.walls.values()].map(w => ({ id: w.id, key: w.key, hp: w.hp, spent: w.spent, heroDoor: !!w.heroDoor }));
+  const data = { v: 1, level: state.level, wave: state.wave, gold: state.gold, lives: state.lives, heroLv: state.heroLv,
+                 heroLevel: state.heroLevel, heroXp: state.heroXp, weapon: state.weapon, buildings: bs, walls: ws };
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch (e) { /* ikke vigtigt */ }
+}
+function clearSave() { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* ikke vigtigt */ } }
+function readSave() {
+  try {
+    const d = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
+    return d && d.v === 1 && Number.isInteger(d.level) && d.level >= 1 && d.level <= PLAYABLE_LEVELS ? d : null;
+  } catch (e) { return null; }
+}
+
+// Starter banen og lægger det gemte ind. Ugyldige dele springes over; giver det ingen vej, startes forfra.
+function loadGame(d) {
+  playLevel(d.level);
+  const num = (v, lo, hi, def) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : def);
+  state.wave = Math.floor(num(d.wave, 1, state.map.waves.count, 1));
+  state.gold = Math.floor(num(d.gold, 0, 1e6, state.gold));
+  state.lives = Math.floor(num(d.lives, 1, 1000, state.lives));
+  for (const k of Object.keys(state.heroLv)) state.heroLv[k] = Math.floor(num(d.heroLv && d.heroLv[k], 0, HERO_MAX_LEVEL, 0));
+  state.heroLevel = Math.floor(num(d.heroLevel, 1, CONFIG.heroXp.maxLevel, state.heroLevel));
+  state.heroXp = num(d.heroXp, 0, 1e6, 0);
+  state.weapon = d.weapon === 'bow' && owns('bow') ? 'bow' : 'sword';
+  for (const o of Array.isArray(d.walls) ? d.walls : []) {
+    const def = o && BUILDINGS[o.id];
+    if (!def || !def.edge || typeof o.key !== 'string' || !/^[hv]\d+,\d+$/.test(o.key) || state.walls.has(o.key)) continue;
+    const w = { id: o.id, key: o.key, spent: num(o.spent, 0, 1e6, def.cost), fresh: false };
+    if (o.heroDoor) w.heroDoor = true;
+    if (def.gate) w.hp = num(o.hp, 1, maxHp(w), maxHp(w));   // porte har liv; hegn og mure kun, hvis bossen har ramt dem
+    else if (Number.isFinite(o.hp) && !o.heroDoor) w.hp = num(o.hp, 1, maxHp(w), maxHp(w));
+    state.walls.set(o.key, w);
+  }
+  for (const o of Array.isArray(d.buildings) ? d.buildings : []) {
+    const def = o && BUILDINGS[o.id];
+    if (!def || def.edge || !Number.isInteger(o.x) || !Number.isInteger(o.y)) continue;
+    const { x, y } = o;
+    if (!inBounds(x, y) || isCastle(x, y) || isSpawn(x, y) || isObstacle(x, y) || buildingAt(x, y)) continue;
+    if ((LOCKED[o.id] && !owns(LOCKED[o.id])) || levelLocked(o.id)) continue;
+    const b = { id: o.id, x, y, hp: num(o.hp, 1, maxHp({ id: o.id }), maxHp({ id: o.id })), spent: num(o.spent, 0, 1e6, def.cost), fresh: false, cooldown: 0 };
+    state.buildings.set(idx(x, y), b);
+    if (def.soldiers) {
+      const r = o.rally;
+      b.rally = r && Number.isFinite(r.x) && Number.isFinite(r.y) && walkableCell(Math.floor(r.x), Math.floor(r.y)) ? { x: r.x, y: r.y } : defaultRally(b);
+      makeSoldiers(b);
+    }
+    if (o.wizard && def.tower && def.tower.magic) { b.wizard = true; addWizard(b); }
+  }
+  recomputeField();
+  if (placementProblem() || !hasOpening()) { playLevel(d.level); say('Det gemte spil kunne ikke bruges. Banen starter forfra.'); return; }
+  state.hero = newHero();
+  buildToolbar();
+}
+
 const totalStars = () => Object.values(progress.stars).reduce((a, b) => a + b, 0);
 const ownCount = id => progress.owned[id] || 0;
 const owns = id => ownCount(id) > 0;
@@ -2214,11 +2276,13 @@ function renderLevels() {
 function chooseLevel(n) {
   if (n > unlockedLevel()) return menuSay('Klar de tidligere baner først.');
   if (n > PLAYABLE_LEVELS) return menuSay(`Bane ${n} er ikke lavet endnu.`);
-  if (inProgress(n)) {
-    $('dlgText').textContent = `Bane ${n} er i gang (runde ${state.wave}).`;
+  const saved = readSave();
+  if (inProgress(n) || (saved && saved.level === n)) {
+    const live = inProgress(n);
+    $('dlgText').textContent = `Bane ${n} er i gang (runde ${live ? state.wave : saved.wave}).`;
     $('levelDialog').hidden = false;
-    $('bContinue').onclick = () => { $('levelDialog').hidden = true; showStage(2); };
-    $('bNew').onclick = () => { $('levelDialog').hidden = true; playLevel(n); };
+    $('bContinue').onclick = () => { $('levelDialog').hidden = true; if (live) showStage(2); else loadGame(saved); };
+    $('bNew').onclick = () => { $('levelDialog').hidden = true; clearSave(); playLevel(n); };
     return;
   }
   playLevel(n);
@@ -2323,6 +2387,7 @@ function frame(now) {
       progress.stars[state.level] = Math.max(progress.stars[state.level] || 0, starsFor(state.lives));
       saveProgress();
     }
+    if (state.level && (state.phase === 'won' || state.phase === 'over')) clearSave();
     buildToolbar();
   }
   draw();
@@ -2334,5 +2399,9 @@ buildToolbar();
 resize();
 showStage(0, true);
 requestAnimationFrame(frame);
+// gem byggefasen, når appen lukkes eller lægges væk
+// (kun en bane, der er i gang, så en tom bane ikke skriver hen over det gemte)
+document.addEventListener('visibilitychange', () => { if (document.hidden && state.phase === 'build' && inProgress(state.level)) saveGame(); });
+window.addEventListener('pagehide', () => { if (state.phase === 'build' && inProgress(state.level)) saveGame(); });
 window.borgmuren = { get state() { return state; }, update, startWave, placeCell, placeEdge, moveHero, tap,
-                     recomputeField, hasOpening, setRally, showStage, playLevel, upgrade, useAbility, castAt, playCustom, parseLevel, smash, LEVELS, CONFIG, BUILDINGS, hKey, vKey };
+                     recomputeField, hasOpening, setRally, showStage, playLevel, upgrade, useAbility, castAt, saveGame, loadGame, readSave, chooseLevel, playCustom, parseLevel, smash, LEVELS, CONFIG, BUILDINGS, hKey, vKey };
