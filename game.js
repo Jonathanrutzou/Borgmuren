@@ -1811,13 +1811,131 @@ function drawNight() {
   ctx.restore();
 }
 
+// ---------- landskab ----------
+// Banen tegnes som et landskab set oppefra, ud fra felterne: græs med pletter, søer med sandbred,
+// sten og indgangsfelter. Vand-masken bløddes op, så bredden bliver rund, men følger felternes kant
+// (grænsen ligger hvor masken er 0,5). Tegnes én gang pr. bane og skaleres så.
+let landscapeOn = true;   // false: den gamle, flade bane (tast L skifter)
+const LAND_PX = 24;   // pixels pr. felt i landskabsbilledet
+const hash2 = (x, y, k = 0) => { let h = (x * 374761393 + y * 668265263 + k * 2147483647) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+function valueNoise(x, y, k) {
+  const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+  const a = hash2(ix, iy, k), b = hash2(ix + 1, iy, k), c = hash2(ix, iy + 1, k), d = hash2(ix + 1, iy + 1, k);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+}
+// Blødgør en maske med to gange vandret og lodret kasse-sløring (næsten som en gauss).
+function blurMask(m, w, h, r) {
+  const tmp = new Float32Array(w * h);
+  for (let pass = 0; pass < 2; pass++) {
+    for (let y = 0; y < h; y++) {
+      let acc = 0;
+      for (let x = -r; x <= r; x++) acc += m[y * w + Math.min(w - 1, Math.max(0, x))];
+      for (let x = 0; x < w; x++) {
+        tmp[y * w + x] = acc / (2 * r + 1);
+        acc += m[y * w + Math.min(w - 1, x + r + 1)] - m[y * w + Math.max(0, x - r)];
+      }
+    }
+    for (let x = 0; x < w; x++) {
+      let acc = 0;
+      for (let y = -r; y <= r; y++) acc += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
+      for (let y = 0; y < h; y++) {
+        m[y * w + x] = acc / (2 * r + 1);
+        acc += tmp[Math.min(h - 1, y + r + 1) * w + x] - tmp[Math.max(0, y - r) * w + x];
+      }
+    }
+  }
+}
+function buildLandscape(map) {
+  const P = LAND_PX, W = map.cols * P, H = map.rows * P;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  const t = (x, y) => map.terrain[Math.min(map.rows - 1, Math.max(0, y)) * map.cols + Math.min(map.cols - 1, Math.max(0, x))];
+  const water = new Float32Array(W * H), dirt = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const tt = t(Math.floor(x / P), Math.floor(y / P));
+    water[y * W + x] = tt === T_WATER ? 1 : 0;
+    dirt[y * W + x] = tt === T_SPAWN ? 1 : tt === T_ROCK ? 0.45 : 0;
+  }
+  blurMask(water, W, H, Math.round(P * 0.36));
+  blurMask(dirt, W, H, Math.round(P * 0.3));
+  const img = g.createImageData(W, H), px = img.data;
+  const mix = (a, b, f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+  const GRASS1 = [122, 150, 92], GRASS2 = [98, 128, 72], SAND = [214, 200, 156], SHALLOW = [118, 168, 186], DEEP = [62, 112, 140], DIRT = [160, 138, 102];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, cx = x / P, cy = y / P;
+    const n = valueNoise(cx / 3, cy / 3, 1) * 0.6 + valueNoise(cx, cy, 2) * 0.3 + hash2(x, y, 3) * 0.1;
+    let c = mix(GRASS1, GRASS2, Math.min(1, Math.max(0, (n - 0.3) * 1.6)));
+    const d = dirt[i];
+    if (d > 0.15) c = mix(c, DIRT, Math.min(1, (d - 0.15) * 1.6) * (0.75 + 0.25 * n));
+    const w = water[i] + (valueNoise(cx * 2, cy * 2, 4) - 0.5) * 0.08;   // lidt ujævn bred
+    if (w > 0.5) c = mix(SHALLOW, DEEP, Math.min(1, (w - 0.5) * 2.5) * (0.85 + 0.15 * n));
+    else if (w > 0.34) c = mix(c, SAND, Math.min(1, (w - 0.34) / 0.07));
+    px[i * 4] = c[0]; px[i * 4 + 1] = c[1]; px[i * 4 + 2] = c[2]; px[i * 4 + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  for (let cy = 0; cy < map.rows; cy++) for (let cx = 0; cx < map.cols; cx++) {
+    const tt = t(cx, cy), ox = cx * P, oy = cy * P;
+    if (tt === T_GRASS) {   // græstotter og en sjælden blomst
+      g.strokeStyle = 'rgba(52,78,38,0.35)'; g.lineWidth = 1;
+      for (let k = 0; k < 3; k++) {
+        const gx = ox + hash2(cx, cy, 10 + k) * P, gy = oy + hash2(cx, cy, 20 + k) * P;
+        g.beginPath(); g.moveTo(gx - 2, gy); g.lineTo(gx - 1, gy - 3); g.moveTo(gx, gy); g.lineTo(gx, gy - 4); g.moveTo(gx + 2, gy); g.lineTo(gx + 1, gy - 3); g.stroke();
+      }
+      if (hash2(cx, cy, 30) < 0.06) {
+        g.fillStyle = hash2(cx, cy, 31) < 0.5 ? '#f1e7b0' : '#e8b4b4';
+        g.beginPath(); g.arc(ox + hash2(cx, cy, 32) * P, oy + hash2(cx, cy, 33) * P, 1.6, 0, Math.PI * 2); g.fill();
+      }
+    } else if (tt === T_WATER && hash2(cx, cy, 40) < 0.25) {   // små lyse krusninger
+      g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 1;
+      const wx = ox + P * (0.25 + hash2(cx, cy, 41) * 0.4), wy = oy + P * (0.3 + hash2(cx, cy, 42) * 0.4);
+      g.beginPath(); g.moveTo(wx, wy); g.quadraticCurveTo(wx + 3, wy - 2, wx + 6, wy); g.stroke();
+    } else if (tt === T_ROCK) {   // 2-3 sten med skygge og lys kant
+      const n = 2 + Math.floor(hash2(cx, cy, 50) * 2);
+      for (let k = 0; k < n; k++) {
+        const r = P * (k === 0 ? 0.3 : 0.16 + hash2(cx, cy, 51 + k) * 0.08);
+        const sx = ox + P * (k === 0 ? 0.48 : 0.2 + hash2(cx, cy, 55 + k) * 0.6), sy = oy + P * (k === 0 ? 0.5 : 0.2 + hash2(cx, cy, 58 + k) * 0.6);
+        g.fillStyle = 'rgba(0,0,0,0.25)';
+        g.beginPath(); g.ellipse(sx + r * 0.3, sy + r * 0.35, r, r * 0.8, 0, 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#8b867c';
+        g.beginPath(); g.ellipse(sx, sy, r, r * 0.82, hash2(cx, cy, 60 + k), 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#b2ada2';
+        g.beginPath(); g.ellipse(sx - r * 0.25, sy - r * 0.25, r * 0.5, r * 0.35, -0.5, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = 'rgba(40,38,34,0.6)'; g.lineWidth = 1;
+        g.beginPath(); g.ellipse(sx, sy, r, r * 0.82, hash2(cx, cy, 60 + k), 0, Math.PI * 2); g.stroke();
+      }
+    }
+  }
+  return cv;
+}
+
 function draw() {
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, viewW, viewH);
   ctx.setTransform(dpr, 0, 0, dpr, -camX * dpr, -camY * dpr);
 
-  // bane, indgangsfelter (røde), vand og sten
+  // bane: landskabet (græs, søer, sten), og indgangsfelterne svagt røde ovenpå
+  if (landscapeOn) {
+    if (!state.map.land) state.map.land = buildLandscape(state.map);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(state.map.land, 0, 0, COLS * tile, ROWS * tile);
+    ctx.fillStyle = 'rgba(220,38,38,0.16)';
+    for (const p of state.map.spawns) ctx.fillRect(p.x * tile, p.y * tile, tile + 0.5, tile + 0.5);
+  } else drawFlatTerrain();
+
+  // gitter: svagt og hvidt på landskabet
+  ctx.strokeStyle = landscapeOn ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.08)'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = 0; x <= COLS; x++) { ctx.moveTo(x * tile + 0.5, 0); ctx.lineTo(x * tile + 0.5, ROWS * tile); }
+  for (let y = 0; y <= ROWS; y++) { ctx.moveTo(0, y * tile + 0.5); ctx.lineTo(COLS * tile, y * tile + 0.5); }
+  ctx.stroke();
+  drawRest(dpr);
+}
+
+// Den gamle, flade bane (papirfarve med firkantet vand og sten).
+function drawFlatTerrain() {
   ctx.fillStyle = '#e7e2d4';
   ctx.fillRect(0, 0, COLS * tile, ROWS * tile);
   for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
@@ -1842,13 +1960,9 @@ function draw() {
     }
   }
 
-  // gitter
-  ctx.strokeStyle = 'rgba(0,0,0,0.08)'; ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = 0; x <= COLS; x++) { ctx.moveTo(x * tile + 0.5, 0); ctx.lineTo(x * tile + 0.5, ROWS * tile); }
-  for (let y = 0; y <= ROWS; y++) { ctx.moveTo(0, y * tile + 0.5); ctx.lineTo(COLS * tile, y * tile + 0.5); }
-  ctx.stroke();
+}
 
+function drawRest(dpr) {
   // tyk kant rundt om banen, som en mur (uden for felterne)
   const bw = Math.max(5, tile * 0.3);
   ctx.strokeStyle = '#6b6457'; ctx.lineWidth = bw; ctx.lineJoin = 'miter';
@@ -2402,6 +2516,7 @@ requestAnimationFrame(frame);
 // gem byggefasen, når appen lukkes eller lægges væk
 // (kun en bane, der er i gang, så en tom bane ikke skriver hen over det gemte)
 document.addEventListener('visibilitychange', () => { if (document.hidden && state.phase === 'build' && inProgress(state.level)) saveGame(); });
+window.addEventListener('keydown', ev => { if (ev.key === 'l' || ev.key === 'L') landscapeOn = !landscapeOn; });
 window.addEventListener('pagehide', () => { if (state.phase === 'build' && inProgress(state.level)) saveGame(); });
 window.borgmuren = { get state() { return state; }, update, startWave, placeCell, placeEdge, moveHero, tap,
                      recomputeField, hasOpening, setRally, showStage, playLevel, upgrade, useAbility, castAt, saveGame, loadGame, readSave, chooseLevel, playCustom, parseLevel, smash, LEVELS, CONFIG, BUILDINGS, hKey, vKey };
