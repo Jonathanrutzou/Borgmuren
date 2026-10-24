@@ -45,7 +45,7 @@ const CONFIG = {
   // monster tilsvarende mere liv, så den samlede mængde liv er den samme. Monstrene kommer i
   // grupper på groupSize, tæt efter hinanden (groupSpawnSec); næste gruppe kommer, når der er
   // højst groupNextAt monstre tilbage, eller efter groupWaitSec.
-  maxPerRound: 200, groupSize: 50, groupSpawnSec: 0.2, groupNextAt: 10, groupWaitSec: 15,
+  maxPerRound: 200, groupSize: 10, groupSpawnSec: 0.2, groupNextAt: 5, groupWaitSec: 10,
   monsterHpGrowth: 0.075,   // +7,5 % liv pr. bølge, oven i den forrige (runde 10: 1,9×, runde 20: 4,0×)
 };
 
